@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="application-name" content="MindSpace"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-status-bar-style" content="default"/>
+<meta name="apple-mobile-web-app-title" content="MindSpace"/>
+<meta name="mobile-web-app-capable" content="yes"/>
+<meta name="theme-color" content="#1900ff"/>
+<meta name="msapplication-TileColor" content="#1900ff"/>
+<meta name="msapplication-TileImage" content="icons/icon-144.png"/>
+<link rel="manifest" href="manifest.json"/>
+<link rel="apple-touch-icon" href="icons/icon-192.png"/>
+<link rel="apple-touch-icon" sizes="152x152" href="icons/icon-152.png"/>
+<link rel="apple-touch-icon" sizes="192x192" href="icons/icon-192.png"/>
+<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png"/>
+<link rel="icon" type="image/png" sizes="96x96" href="icons/icon-96.png"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>MindSpace — Safe Counselling, Always</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=DM+Sans:ital,wght@0,300;0,400;0,500;0,700;1,300&family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet"/>
+<style>
+:root{
+  --ink:#0A0A0A;
+  --white:#FFFFFF;
+  --off:#F5F3EF;
+  --off-2:#EDEBE6;
+  --gold:#D4A017;
+  --gold-hi:#F0C040;
+  --gold-lo:#A87800;
+  --sage:#1900ff;
+  --sage-lo:#1200b3;
+  --muted:#888888;
+  --dim:#BBBBBB;
+  --border:#E0DDD8;
+  --border-2:#D0CCC5;
+  --err:#C0392B;
+}
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{background:var(--off);color:var(--ink);font-family:'DM Sans',sans-serif;overflow-x:hidden;-webkit-font-smoothing:antialiased;min-height:100vh}
+
+/* CURSOR */
+#c-dot,#c-ring{position:fixed;top:0;left:0;pointer-events:none;z-index:99999;border-radius:50%;transform:translate(-50%,-50%)}
+#c-dot{width:8px;height:8px;background:var(--sage);transition:transform .15s}
+#c-ring{width:36px;height:36px;border:1.5px solid rgba(25,0,255,.4);transition:all .3s cubic-bezier(.16,1,.3,1)}
+.c-hover #c-dot{transform:translate(-50%,-50%) scale(0)}
+.c-hover #c-ring{width:48px;height:48px;border-color:var(--sage)}
+@media(pointer:coarse){#c-dot,#c-ring{display:none}}
+
+/* NAV */
+nav{position:fixed;top:0;left:0;right:0;z-index:900;height:64px;display:flex;align-items:center;justify-content:space-between;padding:0 48px;transition:background .35s,box-shadow .35s}
+nav.solid{background:rgba(245,243,239,.97);backdrop-filter:blur(20px);box-shadow:0 1px 0 var(--border)}
+.n-logo{font-family:'Anton',sans-serif;font-size:22px;letter-spacing:2px;text-transform:uppercase;color:var(--ink);text-decoration:none;display:flex;align-items:center;gap:10px}
+.n-pip{width:8px;height:8px;background:var(--sage);flex-shrink:0}
+.n-right{display:flex;gap:12px;align-items:center}
+.n-btn{font-size:12px;font-weight:600;letter-spacing:1.5px;text-transform:uppercase;padding:10px 22px;text-decoration:none;transition:all .22s;cursor:pointer;border:none;font-family:'DM Sans',sans-serif}
+.n-btn-outline{background:transparent;border:1.5px solid var(--border-2);color:var(--muted)}
+.n-btn-outline:hover{border-color:var(--ink);color:var(--ink)}
+.n-btn-fill{background:var(--sage);color:var(--white)}
+.n-btn-fill:hover{background:var(--sage-lo)}
+
+/* HERO */
+#hero{min-height:100vh;display:grid;grid-template-columns:1fr 1fr;background:var(--white);padding-top:64px}
+.h-left{display:flex;flex-direction:column;justify-content:center;padding:80px 48px;border-right:1px solid var(--border)}
+.h-eyebrow{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:5px;color:var(--muted);text-transform:uppercase;margin-bottom:32px;display:flex;align-items:center;gap:12px}
+.h-eyebrow::before{content:'';width:24px;height:1px;background:var(--sage)}
+.h-title{font-family:'Anton',sans-serif;font-size:clamp(56px,9vw,120px);line-height:.88;letter-spacing:2px;text-transform:uppercase;color:var(--ink);margin-bottom:8px}
+.h-title em{color:var(--sage);font-style:normal;display:block}
+.h-sub{font-size:clamp(14px,1.5vw,17px);font-weight:300;color:var(--muted);line-height:1.9;max-width:400px;margin:28px 0 40px}
+.h-sub strong{color:var(--ink);font-weight:600}
+.h-cta-row{display:flex;gap:12px;flex-wrap:wrap}
+.btn-primary{font-size:13px;font-weight:700;letter-spacing:2px;text-transform:uppercase;background:var(--sage);color:var(--white);padding:18px 40px;text-decoration:none;transition:all .22s;display:inline-block;cursor:pointer;border:none;font-family:'DM Sans',sans-serif}
+.btn-primary:hover{background:var(--sage-lo);transform:translateY(-2px)}
+.btn-secondary{font-size:13px;font-weight:600;letter-spacing:2px;text-transform:uppercase;border:1.5px solid var(--border-2);color:var(--muted);padding:18px 40px;text-decoration:none;transition:all .22s;display:inline-block;cursor:pointer;background:transparent;font-family:'DM Sans',sans-serif}
+.btn-secondary:hover{border-color:var(--ink);color:var(--ink)}
+.h-stat-row{display:flex;gap:32px;margin-top:48px;padding-top:32px;border-top:1px solid var(--border)}
+.h-stat-num{font-family:'Anton',sans-serif;font-size:36px;letter-spacing:1px;color:var(--ink)}
+.h-stat-num sup{font-size:.45em;color:var(--sage);vertical-align:super;font-family:'DM Sans',sans-serif;font-weight:900}
+.h-stat-lbl{font-size:11px;color:var(--muted);letter-spacing:.5px;margin-top:3px}
+.h-stat-div{width:1px;background:var(--border)}
+
+/* RIGHT PANEL - Auth forms */
+.h-right{background:var(--off-2);display:flex;flex-direction:column;justify-content:center;padding:80px 60px;position:relative}
+.h-right-label{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:6px;color:var(--muted);text-transform:uppercase;margin-bottom:32px;display:flex;align-items:center;gap:12px}
+.h-right-label::before{content:'';width:20px;height:1px;background:var(--sage)}
+
+/* Auth tabs */
+.auth-tabs{display:flex;gap:0;margin-bottom:32px;border:1px solid var(--border);background:var(--white)}
+.auth-tab{flex:1;padding:14px;font-size:12px;font-weight:600;letter-spacing:1.5px;text-transform:uppercase;border:none;cursor:pointer;font-family:'DM Sans',sans-serif;background:transparent;color:var(--muted);transition:all .22s}
+.auth-tab.active{background:var(--sage);color:var(--white)}
+.auth-panel{display:none}
+.auth-panel.active{display:flex;flex-direction:column;gap:14px}
+.form-group{display:flex;flex-direction:column;gap:6px}
+.form-label{font-size:11px;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:var(--muted)}
+.form-input{background:var(--white);border:1.5px solid var(--border);padding:14px 16px;color:var(--ink);font-family:'DM Sans',sans-serif;font-size:15px;outline:none;transition:border-color .2s}
+.form-input:focus{border-color:var(--sage)}
+.form-input::placeholder{color:var(--dim)}
+.form-btn{padding:16px;border:none;cursor:pointer;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:700;letter-spacing:2px;text-transform:uppercase;background:var(--sage);color:#fff;transition:all .22s;margin-top:8px}
+.form-btn:hover{background:var(--sage-lo)}
+.form-err{font-size:12px;color:var(--err);font-family:'DM Mono',monospace;letter-spacing:.5px;min-height:16px}
+.form-note{font-size:12px;font-weight:300;color:var(--muted);line-height:1.7;margin-top:8px;text-align:center}
+.form-note a{color:var(--sage);text-decoration:none;font-weight:500}
+
+/* Features strip */
+#features{background:var(--ink);padding:72px 48px;display:grid;grid-template-columns:repeat(3,1fr);gap:1px;position:relative}
+.feat{background:var(--ink);padding:40px 36px;border-right:1px solid rgba(255,255,255,.05)}
+.feat:last-child{border-right:none}
+.feat-ico{width:48px;height:48px;background:rgba(25,0,255,.15);display:flex;align-items:center;justify-content:center;font-size:22px;margin-bottom:20px}
+.feat-h{font-family:'Anton',sans-serif;font-size:22px;letter-spacing:1px;text-transform:uppercase;color:var(--white);margin-bottom:10px}
+.feat-d{font-size:13px;font-weight:300;color:rgba(255,255,255,.45);line-height:1.85}
+
+/* How it works */
+#how{background:var(--off);padding:100px 48px}
+.how-inner{max-width:1100px;margin:0 auto}
+.section-pre{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:6px;color:var(--sage-lo);text-transform:uppercase;display:flex;align-items:center;gap:14px;margin-bottom:20px}
+.section-pre::before{content:'';width:24px;height:1px;background:var(--sage)}
+.section-title{font-family:'Anton',sans-serif;font-size:clamp(44px,6vw,80px);line-height:.88;letter-spacing:2px;text-transform:uppercase;margin-bottom:60px}
+.section-title em{color:var(--sage);font-style:normal}
+.steps{display:grid;grid-template-columns:repeat(4,1fr);gap:0;border:1px solid var(--border);background:var(--border)}
+.step{background:var(--white);padding:40px 32px;position:relative}
+.step-n{font-family:'Anton',sans-serif;font-size:60px;color:rgba(0,0,0,.05);line-height:1;margin-bottom:16px}
+.step-h{font-size:14px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--ink);margin-bottom:8px}
+.step-d{font-size:13px;font-weight:300;color:var(--muted);line-height:1.8}
+.step-bar{position:absolute;bottom:0;left:0;height:3px;background:var(--sage);width:0;transition:width 1s}
+.step.vis .step-bar{width:100%}
+
+/* Crisis banner */
+#crisis{background:var(--sage);padding:32px 48px;display:flex;align-items:center;justify-content:space-between;gap:24px;flex-wrap:wrap}
+.crisis-text{display:flex;align-items:center;gap:16px}
+.crisis-ico{font-size:28px}
+.crisis-msg{font-family:'Anton',sans-serif;font-size:clamp(18px,2vw,24px);letter-spacing:1px;text-transform:uppercase;color:var(--white)}
+.crisis-sub{font-size:13px;font-weight:300;color:rgba(255,255,255,.7);margin-top:2px}
+.crisis-btn{font-size:12px;font-weight:700;letter-spacing:2px;text-transform:uppercase;background:var(--white);color:var(--sage-lo);padding:14px 32px;text-decoration:none;transition:all .22s;flex-shrink:0;display:inline-block}
+.crisis-btn:hover{background:var(--ink);color:var(--white)}
+
+/* Footer */
+footer{background:var(--ink);padding:60px 48px 36px}
+.ft-inner{max-width:1100px;margin:0 auto;display:flex;justify-content:space-between;align-items:flex-start;gap:48px;flex-wrap:wrap;padding-bottom:40px;border-bottom:1px solid rgba(255,255,255,.06);margin-bottom:28px}
+.ft-logo{font-family:'Anton',sans-serif;font-size:28px;letter-spacing:3px;text-transform:uppercase;color:var(--white);margin-bottom:12px}
+.ft-logo span{color:var(--sage)}
+.ft-desc{font-size:13px;font-weight:300;color:rgba(255,255,255,.35);line-height:1.8;max-width:260px}
+.ft-links{display:flex;flex-direction:column;gap:10px}
+.ft-link-h{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:5px;color:rgba(255,255,255,.2);text-transform:uppercase;margin-bottom:8px}
+.ft-links a{font-size:13px;color:rgba(255,255,255,.4);text-decoration:none;transition:color .2s}
+.ft-links a:hover{color:var(--sage)}
+.ft-btm{max-width:1100px;margin:0 auto;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px}
+.ft-copy{font-size:11px;font-family:'DM Mono',monospace;letter-spacing:1px;color:rgba(255,255,255,.2)}
+.ft-badge{font-family:'Anton',sans-serif;font-size:14px;letter-spacing:2px;color:var(--sage);text-transform:uppercase}
+
+/* TOAST */
+#toast{position:fixed;bottom:28px;right:28px;background:var(--white);border:1px solid var(--border);border-left:3px solid var(--sage);padding:18px 22px;max-width:310px;z-index:9000;transform:translateY(16px) scale(.97);opacity:0;transition:all .4s cubic-bezier(.16,1,.3,1);box-shadow:0 8px 48px rgba(0,0,0,.12)}
+#toast.show{transform:none;opacity:1}
+.toast-top{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.toast-dot{width:6px;height:6px;background:var(--sage);flex-shrink:0}
+.toast-t{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:3px;color:var(--sage-lo)}
+#toast-msg{font-size:13px;font-weight:300;color:var(--muted);line-height:1.6}
+
+/* REVEAL */
+.rev{opacity:0;transform:translateY(28px);transition:opacity .7s ease,transform .7s cubic-bezier(.16,1,.3,1)}
+.rev.vis{opacity:1;transform:none}
+
+/* RESPONSIVE */
+@media(max-width:1024px){#hero{grid-template-columns:1fr}.h-right{padding:60px 40px}#features{grid-template-columns:1fr;gap:0}.feat{border-right:none;border-bottom:1px solid rgba(255,255,255,.05)}.steps{grid-template-columns:1fr 1fr}}
+@media(max-width:768px){nav{padding:0 24px}#hero{padding-top:64px}.h-left{padding:60px 24px}.h-right{padding:48px 24px}#features,#how,#crisis,footer{padding-left:24px;padding-right:24px}.steps{grid-template-columns:1fr}#crisis{flex-direction:column;align-items:flex-start}}
+</style>
+
+<style>
+#pwa-install-btn{display:none;align-items:center;gap:6px;font-size:11px;font-family:'DM Mono','JetBrains Mono',monospace;letter-spacing:1.5px;text-transform:uppercase;background:rgba(25,0,255,.1);color:#1900ff;border:1.5px solid rgba(25,0,255,.3);padding:6px 14px;cursor:pointer;transition:all .2s;white-space:nowrap;flex-shrink:0}
+#pwa-install-btn:hover{background:#1900ff;color:#fff;border-color:#1900ff}
+</style>
+</head>
+<body>
+<div id="c-dot"></div>
+<div id="c-ring"></div>
+
+<!-- NAV -->
+<nav id="nav">
+  <a href="index.html" class="n-logo"><span class="n-pip"></span>MindSpace</a>
+  <button id="pwa-install-btn" onclick="installPWA()" title="Add MindSpace to your home screen">⊕ Install App</button>
+<div class="n-right">
+    <a href="#auth" class="n-btn n-btn-outline" onclick="showTab('login')">Sign In</a>
+    <a href="#auth" class="n-btn n-btn-fill" onclick="showTab('register')">Get Support</a>
+  </div>
+</nav>
+
+<!-- HERO -->
+<section id="hero">
+  <div class="h-left">
+    <div class="h-eyebrow">Safe · Confidential · Always Available</div>
+    <h1 class="h-title">YOU<br>ARE NOT<br><em>ALONE.</em></h1>
+    <p class="h-sub">MindSpace connects you with <strong>verified counsellors</strong> in a safe, private space. Text, talk, or call — help is always a message away.</p>
+    <div class="h-cta-row">
+      <button class="btn-primary" onclick="document.getElementById('auth').scrollIntoView({behavior:'smooth'});showTab('register')">Start a Session</button>
+      <button class="btn-secondary" onclick="document.getElementById('how').scrollIntoView({behavior:'smooth'})">How It Works</button>
+    </div>
+    <div class="h-stat-row">
+      <div class="h-stat"><div class="h-stat-num">24<sup>/7</sup></div><div class="h-stat-lbl">Always Available</div></div>
+      <div class="h-stat-div"></div>
+      <div class="h-stat"><div class="h-stat-num">100<sup>%</sup></div><div class="h-stat-lbl">Confidential</div></div>
+      <div class="h-stat-div"></div>
+      <div class="h-stat"><div class="h-stat-num">0<sup>₦</sup></div><div class="h-stat-lbl">Cost to Start</div></div>
+    </div>
+  </div>
+
+  <!-- AUTH PANEL -->
+  <div class="h-right" id="auth">
+    <div class="h-right-label">Begin Your Journey</div>
+    <div class="auth-tabs">
+      <button class="auth-tab active" id="tab-login" onclick="showTab('login')">Sign In</button>
+      <button class="auth-tab" id="tab-register" onclick="showTab('register')">Create Account</button>
+    </div>
+
+    <!-- LOGIN -->
+    <div class="auth-panel active" id="panel-login">
+      <div class="form-group">
+        <label class="form-label">Email Address</label>
+        <input class="form-input" type="email" id="login-email" placeholder="you@example.com"/>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Password</label>
+        <input class="form-input" type="password" id="login-pass" placeholder="••••••••"/>
+      </div>
+      <div class="form-err" id="login-err"></div>
+      <button class="form-btn" onclick="handleLogin()">Sign In</button>
+      <p class="form-note">No account? <a href="#" onclick="showTab('register')">Create one free</a></p>
+    </div>
+
+    <!-- REGISTER -->
+    <div class="auth-panel" id="panel-register">
+      <div class="form-group">
+        <label class="form-label">Your Name (can be a nickname)</label>
+        <input class="form-input" type="text" id="reg-name" placeholder="e.g. Hope, Alex, Anonymous"/>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Email Address</label>
+        <input class="form-input" type="email" id="reg-email" placeholder="you@example.com"/>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Password</label>
+        <input class="form-input" type="password" id="reg-pass" placeholder="At least 8 characters"/>
+      </div>
+      <div class="form-err" id="reg-err"></div>
+      <button class="form-btn" onclick="handleRegister()">Create Account & Chat</button>
+      <p class="form-note">Your identity is always protected. <a href="#">Privacy Policy</a></p>
+    </div>
+  </div>
+</section>
+
+<!-- FEATURES -->
+<section id="features">
+  <div class="feat rev">
+    <div class="feat-ico">💬</div>
+    <div class="feat-h">Real-Time Chat</div>
+    <div class="feat-d">Send messages instantly and get thoughtful responses from a verified counsellor — no waiting rooms, no scheduling.</div>
+  </div>
+  <div class="feat rev">
+    <div class="feat-ico">📞</div>
+    <div class="feat-h">Voice & Video Calls</div>
+    <div class="feat-d">When text isn't enough, escalate to a live voice or video call directly from the platform — no app download needed.</div>
+  </div>
+  <div class="feat rev">
+    <div class="feat-ico">🔒</div>
+    <div class="feat-h">Fully Confidential</div>
+    <div class="feat-d">Your conversations are encrypted and private. Share only what you're comfortable sharing — your name can even be a nickname.</div>
+  </div>
+</section>
+
+<!-- HOW IT WORKS -->
+<section id="how">
+  <div class="how-inner">
+    <div class="section-pre rev">The Process</div>
+    <h2 class="section-title rev">HOW IT<br><em>WORKS</em></h2>
+    <div class="steps rev">
+      <div class="step"><div class="step-n">01</div><div class="step-h">Create Account</div><div class="step-d">Sign up with a nickname — full anonymity is supported. No personal info required to start.</div><div class="step-bar"></div></div>
+      <div class="step"><div class="step-n">02</div><div class="step-h">Send a Message</div><div class="step-d">Type what's on your mind — your session begins immediately. No forms, no intake paperwork.</div><div class="step-bar"></div></div>
+      <div class="step"><div class="step-n">03</div><div class="step-h">Counsellor Responds</div><div class="step-d">A verified counsellor reads your message and replies. Real human support, not automated bots.</div><div class="step-bar"></div></div>
+      <div class="step"><div class="step-n">04</div><div class="step-h">Talk or Call</div><div class="step-d">Continue chatting or elevate to a voice/video call when you're ready. Your pace, your comfort.</div><div class="step-bar"></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- CRISIS -->
+<div id="crisis">
+  <div class="crisis-text">
+    <div class="crisis-ico">🆘</div>
+    <div>
+      <div class="crisis-msg">In immediate crisis? You are not alone.</div>
+      <div class="crisis-sub">Nigeria Suicide Prevention Helpline: 0800-800-2000 · Available 24/7</div>
+    </div>
+  </div>
+  <a href="tel:08008002000" class="crisis-btn">Call Now</a>
+</div>
+
+<!-- FOOTER -->
+<footer>
+  <div class="ft-inner">
+    <div>
+      <div class="ft-logo">Mind<span>Space</span></div>
+      <p class="ft-desc">A safe, confidential platform for mental health support. Every conversation is protected. Every person matters.</p>
+    </div>
+    <div>
+      <div class="ft-link-h">Platform</div>
+      <div class="ft-links">
+        <a href="#auth">Start a Session</a>
+        <a href="#how">How It Works</a>
+        <a href="#">Privacy Policy</a>
+        <a href="#">Terms of Use</a>
+      </div>
+    </div>
+    <div>
+      <div class="ft-link-h">Help</div>
+      <div class="ft-links">
+        <a href="#">Crisis Resources</a>
+        <a href="#">FAQ</a>
+        <a href="#">Contact Support</a>
+      </div>
+    </div>
+  </div>
+  <div class="ft-btm">
+    <p class="ft-copy">© 2025 MindSpace · All conversations confidential</p>
+    <div class="ft-badge">You Matter.</div>
+  </div>
+</footer>
+
+<div id="toast"><div class="toast-top"><div class="toast-dot"></div><div class="toast-t">MINDSPACE</div></div><div id="toast-msg"></div></div>
+
+<!-- Supabase -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="config.js"></script>
+<script src="auth.js"></script>
+<script>
+/* CURSOR */
+const dot=document.getElementById('c-dot'),ring=document.getElementById('c-ring');
+let mx=0,my=0,rx=0,ry=0;
+document.addEventListener('mousemove',e=>{mx=e.clientX;my=e.clientY;dot.style.left=mx+'px';dot.style.top=my+'px';});
+(function animR(){rx+=(mx-rx)*.11;ry+=(my-ry)*.11;ring.style.left=rx+'px';ring.style.top=ry+'px';requestAnimationFrame(animR);})();
+document.querySelectorAll('a,button,.feat,.step').forEach(el=>{el.addEventListener('mouseenter',()=>document.body.classList.add('c-hover'));el.addEventListener('mouseleave',()=>document.body.classList.remove('c-hover'));});
+
+/* NAV */
+const nav=document.getElementById('nav');
+window.addEventListener('scroll',()=>nav.classList.toggle('solid',scrollY>60));
+
+/* TABS */
+function showTab(t){
+  document.querySelectorAll('.auth-tab').forEach(el=>el.classList.remove('active'));
+  document.querySelectorAll('.auth-panel').forEach(el=>el.classList.remove('active'));
+  document.getElementById('tab-'+t).classList.add('active');
+  document.getElementById('panel-'+t).classList.add('active');
+}
+
+/* REVEAL */
+const ro=new IntersectionObserver(entries=>{entries.forEach((e,i)=>{if(e.isIntersecting){setTimeout(()=>{e.target.classList.add('vis');const b=e.target.querySelector('.step-bar');if(b)b.style.width='100%'},i*100);ro.unobserve(e.target);}});},{threshold:.07});
+document.querySelectorAll('.rev').forEach(el=>ro.observe(el));
+
+/* TOAST */
+function showToast(msg){const t=document.getElementById('toast');document.getElementById('toast-msg').textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),5000);}
+window.showToast=showToast;
+</script>
+<!-- #RiseWithIMPACT Ticker -->
+<style>body{padding-bottom:28px!important}</style>
+<div id="rwi-ticker" style="position:fixed;bottom:0;left:0;right:0;z-index:99999;height:28px;overflow:hidden;background:rgba(25,0,255,0.92);backdrop-filter:blur(6px);display:flex;align-items:center;border-top:1px solid rgba(255,255,255,0.12);pointer-events:none;">
+  <div id="rwi-track" style="display:flex;align-items:center;white-space:nowrap;animation:rwi-scroll 22s linear infinite;will-change:transform;"></div>
+</div>
+<style>
+@keyframes rwi-scroll{0%{transform:translateX(0)}100%{transform:translateX(-50%)}}
+#rwi-track span{font-family:'DM Mono','JetBrains Mono',monospace;font-size:10px;letter-spacing:3px;text-transform:uppercase;color:#ffffff;padding:0 28px;opacity:.9}
+#rwi-track span.dot{color:rgba(255,255,255,.35);padding:0 4px;font-size:7px;letter-spacing:0;vertical-align:middle}
+</style>
+<script>
+(function(){
+  var t=document.getElementById('rwi-track');
+  var seg='<span>#RiseWithIMPACT</span><span class="dot">&#10022;</span>';
+  var h='';for(var i=0;i<24;i++)h+=seg;
+  t.innerHTML=h+h;
+})();
+</script>
+
+<!-- ── PWA: Service Worker + Install Prompt ── -->
+<script>
+// ── Service Worker Registration ──
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js')
+      .then(reg => {
+        console.log('[PWA] SW registered. Scope:', reg.scope);
+        // Listen for updates
+        reg.addEventListener('updatefound', () => {
+          const newWorker = reg.installing;
+          newWorker.addEventListener('statechange', () => {
+            if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+              // New version available — show subtle update banner
+              showUpdateBanner();
+            }
+          });
+        });
+      })
+      .catch(err => console.warn('[PWA] SW registration failed:', err));
+
+    // Listen for messages from SW (e.g. background sync)
+    navigator.serviceWorker.addEventListener('message', event => {
+      if (event.data?.type === 'SYNC_MESSAGES') {
+        console.log('[PWA] Background sync: retrying queued messages');
+        if (typeof sendQueuedMessages === 'function') sendQueuedMessages();
+      }
+    });
+  });
+}
+
+// ── Install Prompt (Add to Home Screen) ──
+let deferredPrompt = null;
+window.addEventListener('beforeinstallprompt', e => {
+  e.preventDefault();
+  deferredPrompt = e;
+  // Show install button if it exists on this page
+  const installBtn = document.getElementById('pwa-install-btn');
+  if (installBtn) installBtn.style.display = 'flex';
+});
+
+async function installPWA() {
+  if (!deferredPrompt) return;
+  deferredPrompt.prompt();
+  const { outcome } = await deferredPrompt.userChoice;
+  console.log('[PWA] Install prompt outcome:', outcome);
+  deferredPrompt = null;
+  const installBtn = document.getElementById('pwa-install-btn');
+  if (installBtn) installBtn.style.display = 'none';
+}
+window.installPWA = installPWA;
+
+window.addEventListener('appinstalled', () => {
+  console.log('[PWA] MindSpace installed successfully!');
+  deferredPrompt = null;
+});
+
+// ── Update Banner ──
+function showUpdateBanner() {
+  const existing = document.getElementById('pwa-update-banner');
+  if (existing) return;
+  const banner = document.createElement('div');
+  banner.id = 'pwa-update-banner';
+  banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:999999;background:#1900ff;color:#fff;padding:10px 16px;display:flex;align-items:center;justify-content:space-between;font-family:DM Sans,sans-serif;font-size:13px;gap:12px';
+  banner.innerHTML = '<span>🔄 A new version of MindSpace is available.</span><button onclick="window.location.reload()" style="background:#fff;color:#1900ff;border:none;padding:6px 16px;font-size:12px;font-weight:700;letter-spacing:1px;text-transform:uppercase;cursor:pointer;font-family:inherit">Update</button>';
+  document.body.prepend(banner);
+}
+
+// ── Offline Queue for chat messages ──
+const MSG_QUEUE_KEY = 'mindspace_offline_queue';
+function queueMessage(msgData) {
+  const q = JSON.parse(localStorage.getItem(MSG_QUEUE_KEY) || '[]');
+  q.push({ ...msgData, queued_at: Date.now() });
+  localStorage.setItem(MSG_QUEUE_KEY, JSON.stringify(q));
+  // Register background sync if supported
+  if ('serviceWorker' in navigator && 'SyncManager' in window) {
+    navigator.serviceWorker.ready.then(reg => reg.sync.register('sync-messages'));
+  }
+}
+async function sendQueuedMessages() {
+  const q = JSON.parse(localStorage.getItem(MSG_QUEUE_KEY) || '[]');
+  if (!q.length || !window.sb) return;
+  const remaining = [];
+  for (const msg of q) {
+    try {
+      const { error } = await window.sb.from('messages').insert(msg);
+      if (error) remaining.push(msg);
+    } catch { remaining.push(msg); }
+  }
+  localStorage.setItem(MSG_QUEUE_KEY, JSON.stringify(remaining));
+  if (!remaining.length) console.log('[PWA] Offline queue flushed.');
+}
+// Try flushing queue when back online
+window.addEventListener('online', sendQueuedMessages);
+window.queueMessage = queueMessage;
+window.sendQueuedMessages = sendQueuedMessages;
+</script>
+</body>
+</html>
