@@ -28,8 +28,9 @@
   --err:#C0392B;--warn:#E67E22;
 }
 *,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
-html,body{height:100%;overflow:hidden}
-body{background:var(--off);color:var(--ink);font-family:'DM Sans',sans-serif;-webkit-font-smoothing:antialiased;display:flex;flex-direction:column}
+html{height:100%}
+body{height:100%;overflow:hidden;background:var(--off);color:var(--ink);font-family:'DM Sans',sans-serif;-webkit-font-smoothing:antialiased;display:flex;flex-direction:column}
+@media(max-width:900px){body{overflow:hidden;height:100dvh}}
 
 /* TOP BAR */
 .topbar{height:56px;background:var(--ink);display:flex;align-items:center;justify-content:space-between;padding:0 16px;flex-shrink:0;z-index:200;gap:8px}
@@ -37,7 +38,8 @@ body{background:var(--off);color:var(--ink);font-family:'DM Sans',sans-serif;-we
 .topbar-pip{width:6px;height:6px;background:var(--sage);flex-shrink:0}
 .admin-badge{font-family:'DM Mono',monospace;font-size:8px;letter-spacing:3px;text-transform:uppercase;background:var(--sage);color:var(--white);padding:3px 8px;display:none}
 @media(min-width:600px){.admin-badge{display:inline}}
-.topbar-stats{display:flex;gap:16px;flex:1;justify-content:center}
+.topbar-stats{display:flex;gap:12px;flex:1;justify-content:center}
+@media(max-width:480px){.topbar-stats{gap:8px}.ts-l{display:none}}
 .ts{display:flex;flex-direction:column;align-items:center}
 .ts-n{font-family:'Anton',sans-serif;font-size:18px;color:var(--white);letter-spacing:1px;line-height:1}
 .ts-l{font-size:9px;font-family:'DM Mono',monospace;letter-spacing:2px;color:rgba(255,255,255,.35);text-transform:uppercase}
@@ -48,27 +50,42 @@ body{background:var(--off);color:var(--ink);font-family:'DM Sans',sans-serif;-we
 .sign-out-btn:hover{border-color:rgba(255,255,255,.4);color:white}
 
 /* MOBILE NAV */
-.mobile-nav{display:none;height:48px;background:var(--white);border-bottom:1px solid var(--border);flex-shrink:0;z-index:150}
-.mobile-nav-tabs{display:flex;height:100%}
-.mnav-tab{flex:1;border:none;background:transparent;font-family:'DM Mono',monospace;font-size:9px;letter-spacing:2px;text-transform:uppercase;color:var(--muted);cursor:pointer;border-bottom:2px solid transparent;transition:all .2s}
+.mobile-nav{display:none;height:48px;background:var(--white);border-bottom:1px solid var(--border);flex-shrink:0;z-index:150;position:sticky;top:56px}
+.mobile-nav-tabs{display:flex;height:100%;gap:0}
+.mnav-tab{flex:1;border:none;background:transparent;font-family:'DM Sans',sans-serif;font-size:11px;font-weight:600;letter-spacing:.3px;color:var(--muted);cursor:pointer;border-bottom:2px solid transparent;transition:all .2s;padding:0 4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .mnav-tab.active{color:var(--sage);border-bottom-color:var(--sage);background:var(--sage-light)}
+.mnav-tab:hover:not(.active){color:var(--ink);background:var(--off)}
 @media(max-width:900px){.mobile-nav{display:flex}}
 
 /* MAIN */
 .main{flex:1;display:grid;grid-template-columns:300px 1fr 260px;overflow:hidden;min-height:0}
 @media(max-width:1100px){.main{grid-template-columns:260px 1fr}}
-@media(max-width:900px){.main{grid-template-columns:1fr;display:block;overflow:hidden;height:100%}}
+@media(max-width:900px){.main{grid-template-columns:1fr;display:flex;flex-direction:column;overflow:hidden;height:calc(100dvh - 56px - 48px - 28px)}}
 
 /* PANEL VISIBILITY on mobile */
 @media(max-width:900px){
-  .conv-list-panel,.user-panel{display:none;height:100%;overflow-y:auto}
-  .chat-panel{display:none;height:100%;overflow:hidden}
-  .conv-list-panel.mobile-active,.chat-panel.mobile-active,.user-panel.mobile-active{display:flex;flex-direction:column}
+  .main{display:flex!important;flex-direction:column;height:calc(100vh - 56px - 48px);overflow:hidden}
+  .conv-list-panel{display:none;flex-direction:column;flex:1;overflow:hidden;height:100%}
+  .chat-panel{display:none;flex-direction:column;flex:1;overflow:hidden;height:100%}
+  .user-panel{display:none!important}
+  .conv-list-panel.mobile-active{display:flex!important}
+  .chat-panel.mobile-active{display:flex!important}
+  .user-panel.mobile-active{display:flex!important;flex-direction:column;flex:1;overflow-y:auto;height:100%}
+  /* Chat panel inner must fill height */
+  .chat-panel.mobile-active #active-chat{display:flex!important;flex-direction:column;height:100%}
+  .chat-panel.mobile-active .messages{flex:1;overflow-y:auto}
+  /* Back button shown on mobile chat */
+  .mob-back-btn{display:flex!important}
 }
 @media(min-width:901px){
   .user-panel{display:flex}
+  .mob-back-btn{display:none!important}
 }
-@media(max-width:1100px){.user-panel{display:none}}
+@media(max-width:1100px) and (min-width:901px){.user-panel{display:none}}
+
+/* Mobile back button */
+.mob-back-btn{display:none;align-items:center;gap:8px;background:none;border:none;cursor:pointer;font-family:'DM Sans',sans-serif;font-size:12px;font-weight:600;color:var(--sage);letter-spacing:.5px;text-transform:uppercase;padding:0;flex-shrink:0}
+.mob-back-btn svg{width:14px;height:14px;fill:currentColor}
 
 /* LEFT - CONVERSATION LIST */
 .conv-list-panel{background:var(--white);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden}
@@ -104,7 +121,7 @@ body{background:var(--off);color:var(--ink);font-family:'DM Sans',sans-serif;-we
 /* CENTER - CHAT */
 .chat-panel{display:flex;flex-direction:column;overflow:hidden;background:var(--off)}
 .chat-top{padding:12px 16px;background:var(--white);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-shrink:0;gap:8px}
-.chat-user-info{display:flex;align-items:center;gap:10px;min-width:0;flex:1}
+.chat-user-info{display:flex;align-items:center;gap:8px;min-width:0;flex:1;overflow:hidden}
 .chat-avatar{width:38px;height:38px;background:var(--ink);display:flex;align-items:center;justify-content:center;font-family:'Anton',sans-serif;font-size:14px;color:white;letter-spacing:1px;flex-shrink:0}
 .chat-user-name{font-family:'Anton',sans-serif;font-size:16px;letter-spacing:1px;text-transform:uppercase;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .chat-user-meta{font-size:10px;font-weight:300;color:var(--muted);font-family:'DM Mono',monospace;letter-spacing:1px;text-transform:uppercase;margin-top:1px}
@@ -117,6 +134,7 @@ body{background:var(--off);color:var(--ink);font-family:'DM Sans',sans-serif;-we
 .action-btn.close-conv:hover{background:var(--err);color:white}
 .action-btn-icon{font-size:14px;padding:7px 10px}
 @media(max-width:640px){.action-btn span{display:none}}
+@media(max-width:900px){.chat-actions{gap:4px}.action-btn{padding:6px 8px}}
 
 /* RISE WITH IMPACT BANNER */
 .rwi-banner{background:var(--sage);padding:6px 16px;display:flex;align-items:center;gap:10px;flex-shrink:0;overflow:hidden}
@@ -274,7 +292,10 @@ body{background:var(--off);color:var(--ink);font-family:'DM Sans',sans-serif;-we
 .rec-cancel{margin-left:auto;background:transparent;border:1px solid var(--err);color:var(--err);cursor:pointer;padding:4px 10px;font-size:11px;font-family:'DM Sans',sans-serif}
 </style>
 
-
+<style>
+#pwa-install-btn{display:none;align-items:center;gap:6px;font-size:11px;font-family:'DM Mono','JetBrains Mono',monospace;letter-spacing:1.5px;text-transform:uppercase;background:rgba(25,0,255,.1);color:#1900ff;border:1.5px solid rgba(25,0,255,.3);padding:6px 14px;cursor:pointer;transition:all .2s;white-space:nowrap;flex-shrink:0}
+#pwa-install-btn:hover{background:#1900ff;color:#fff;border-color:#1900ff}
+</style>
 </head>
 <body>
 
@@ -286,7 +307,8 @@ body{background:var(--off);color:var(--ink);font-family:'DM Sans',sans-serif;-we
     <div class="ts"><div class="ts-n" id="stat-active" style="color:var(--sage)">0</div><div class="ts-l">Active</div></div>
     <div class="ts"><div class="ts-n" id="stat-waiting" style="color:#E67E22">0</div><div class="ts-l">Waiting</div></div>
   </div>
-  <div class="topbar-right">
+  <button id="pwa-install-btn" onclick="installPWA()" title="Add MindSpace to your home screen">⊕ Install App</button>
+<div class="topbar-right">
     <span class="admin-name" id="admin-name"></span>
     <button class="sign-out-btn" onclick="signOut()">Sign Out</button>
   </div>
@@ -296,7 +318,7 @@ body{background:var(--off);color:var(--ink);font-family:'DM Sans',sans-serif;-we
 <div class="mobile-nav">
   <div class="mobile-nav-tabs">
     <button class="mnav-tab active" id="mnav-sessions" onclick="mobileTab('sessions')">💬 Sessions</button>
-    <button class="mnav-tab" id="mnav-chat" onclick="mobileTab('chat')" id="mnav-chat-btn">Chat</button>
+    <button class="mnav-tab" id="mnav-chat" onclick="mobileTab('chat')">💬 Chat</button>
     <button class="mnav-tab" id="mnav-info" onclick="mobileTab('info')">👤 Info</button>
   </div>
 </div>
@@ -339,6 +361,10 @@ body{background:var(--off);color:var(--ink);font-family:'DM Sans',sans-serif;-we
 
       <div class="chat-top">
         <div class="chat-user-info">
+          <button class="mob-back-btn" onclick="mobileTab('sessions')" title="Back to sessions">
+            <svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
+            <span>Sessions</span>
+          </button>
           <div class="chat-avatar" id="chat-avatar">?</div>
           <div style="min-width:0">
             <div class="chat-user-name" id="chat-user-name">—</div>
@@ -528,23 +554,34 @@ async function init() {
 // ── MOBILE TAB NAVIGATION ──
 function mobileTab(tab) {
   currentMobileTab = tab;
-  document.querySelectorAll('.mnav-tab').forEach(b => b.classList.remove('active'));
-  document.getElementById('mnav-' + tab)?.classList.add('active');
 
-  // Hide all panels
+  // Update tab button states
+  document.querySelectorAll('.mnav-tab').forEach(b => b.classList.remove('active'));
+  const activeBtn = document.getElementById('mnav-' + tab);
+  if (activeBtn) activeBtn.classList.add('active');
+
+  // Hide all panels first
   document.getElementById('panel-sessions').classList.remove('mobile-active');
   document.getElementById('panel-chat').classList.remove('mobile-active');
-
   const infoPanel = document.getElementById('user-panel');
+  if (infoPanel) infoPanel.classList.remove('mobile-active');
 
   if (tab === 'sessions') {
     document.getElementById('panel-sessions').classList.add('mobile-active');
-    if (infoPanel) infoPanel.style.display = 'none';
   } else if (tab === 'chat') {
-    document.getElementById('panel-chat').classList.add('mobile-active');
-    if (infoPanel) infoPanel.style.display = 'none';
+    const chatPanel = document.getElementById('panel-chat');
+    chatPanel.classList.add('mobile-active');
+    // Ensure active-chat is visible if a conversation is selected
+    if (activeConvId) {
+      const activeChat = document.getElementById('active-chat');
+      const noSel = document.getElementById('no-selection');
+      if (activeChat) { activeChat.style.display = 'flex'; activeChat.style.flexDirection = 'column'; activeChat.style.height = '100%'; }
+      if (noSel) noSel.style.display = 'none';
+    }
+    // Scroll to bottom of messages
+    setTimeout(scrollToBottom, 80);
   } else if (tab === 'info') {
-    if (infoPanel) { infoPanel.style.cssText = 'display:flex;flex-direction:column;overflow-y:auto;height:100%'; }
+    if (infoPanel) infoPanel.classList.add('mobile-active');
   }
 }
 
@@ -637,10 +674,12 @@ async function selectConversation(convId, userId) {
 
   renderConversationList();
 
-  // On mobile: switch to chat tab
+  // On mobile: switch to chat tab automatically
   if (window.innerWidth <= 900) {
+    // Update chat tab label with user name
+    const chatTabBtn = document.getElementById('mnav-chat');
+    if (chatTabBtn) chatTabBtn.innerHTML = '💬 ' + (name.length > 12 ? name.slice(0,12)+'…' : name);
     mobileTab('chat');
-    document.getElementById('mnav-chat').textContent = '💬 Chat';
   }
 
   const conv = conversations.find(c => c.id === convId);
@@ -1130,379 +1169,102 @@ init();
 })();
 </script>
 
-
-
-<!-- ── PWA Install System ── -->
+<!-- ── PWA: Service Worker + Install Prompt ── -->
 <script>
-(function() {
-  // ── Detect platform ──
-  const ua = navigator.userAgent;
-  const isIOS = /iphone|ipad|ipod/i.test(ua);
-  const isAndroid = /android/i.test(ua);
-  const isSamsung = /samsungbrowser/i.test(ua);
-  const isChrome = /chrome/i.test(ua) && !/edge/i.test(ua);
-  const isFirefox = /firefox/i.test(ua);
-  const isStandalone = window.matchMedia('(display-mode: standalone)').matches
-    || window.navigator.standalone === true;
-
-  let deferredPrompt = null;
-
-  // ── Service Worker ──
-  if ('serviceWorker' in navigator) {
-    window.addEventListener('load', () => {
-      navigator.serviceWorker.register('sw.js')
-        .then(reg => {
-          reg.addEventListener('updatefound', () => {
-            const w = reg.installing;
-            w.addEventListener('statechange', () => {
-              if (w.state === 'installed' && navigator.serviceWorker.controller) {
-                showUpdateBanner();
-              }
-            });
-          });
-        }).catch(e => console.warn('[PWA] SW error:', e));
-
-      navigator.serviceWorker.addEventListener('message', e => {
-        if (e.data && e.data.type === 'SYNC_MESSAGES' && typeof sendQueuedMessages === 'function') {
-          sendQueuedMessages();
-        }
-      });
-    });
-  }
-
-  // ── Capture install prompt (Android/Chrome) ──
-  window.addEventListener('beforeinstallprompt', e => {
-    e.preventDefault();
-    deferredPrompt = e;
-    // Show the floating install banner
-    showInstallBanner('prompt');
-  });
-
-  window.addEventListener('appinstalled', () => {
-    hidePWABanner();
-    deferredPrompt = null;
-    localStorage.setItem('mindspace_installed', '1');
-  });
-
-  // ── Show banner after short delay if not already installed ──
+// ── Service Worker Registration ──
+if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    if (isStandalone) return; // Already running as PWA
-    if (localStorage.getItem('mindspace_pwa_dismissed') === '1') return;
-    if (localStorage.getItem('mindspace_installed') === '1') return;
+    navigator.serviceWorker.register('/sw.js')
+      .then(reg => {
+        console.log('[PWA] SW registered. Scope:', reg.scope);
+        // Listen for updates
+        reg.addEventListener('updatefound', () => {
+          const newWorker = reg.installing;
+          newWorker.addEventListener('statechange', () => {
+            if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+              // New version available — show subtle update banner
+              showUpdateBanner();
+            }
+          });
+        });
+      })
+      .catch(err => console.warn('[PWA] SW registration failed:', err));
 
-    // iOS: always show manual instructions after 2s
-    // Android: wait for beforeinstallprompt event (already handled above)
-    // If nothing fired after 3s, show manual guide anyway
-    setTimeout(() => {
-      const banner = document.getElementById('pwa-banner');
-      if (banner && banner.classList.contains('show')) return; // already shown
-      if (isIOS) {
-        showInstallBanner('ios');
-      } else {
-        // Desktop or unsupported — show generic guide
-        showInstallBanner('manual');
+    // Listen for messages from SW (e.g. background sync)
+    navigator.serviceWorker.addEventListener('message', event => {
+      if (event.data?.type === 'SYNC_MESSAGES') {
+        console.log('[PWA] Background sync: retrying queued messages');
+        if (typeof sendQueuedMessages === 'function') sendQueuedMessages();
       }
-    }, 3000);
-  });
-
-  // ── Build & inject the install UI once ──
-  function injectBannerHTML() {
-    if (document.getElementById('pwa-banner')) return;
-
-    const el = document.createElement('div');
-    el.id = 'pwa-banner';
-    el.innerHTML = `
-      <div id="pwa-banner-inner">
-        <div id="pwa-banner-icon">
-          <img src="icons/icon-96.png" width="48" height="48" alt="MindSpace" onerror="this.style.display='none'" style="display:block"/>
-        </div>
-        <div id="pwa-banner-body">
-          <div id="pwa-banner-title">Install MindSpace</div>
-          <div id="pwa-banner-sub" style="display:none"></div>
-          <div id="pwa-banner-steps" style="display:none"></div>
-          <div id="pwa-banner-actions">
-            <button id="pwa-install-now" onclick="triggerInstall()">Install Now</button>
-            <button id="pwa-how-btn" onclick="showHowTo()">How to Install</button>
-            <button id="pwa-dismiss-btn" onclick="dismissBanner()">✕ Not Now</button>
-          </div>
-        </div>
-      </div>`;
-    document.body.appendChild(el);
-
-    // Inject styles
-    const style = document.createElement('style');
-    style.textContent = `
-      #pwa-banner {
-        position: fixed;
-        bottom: 36px;
-        left: 50%;
-        transform: translateX(-50%) translateY(120px);
-        z-index: 999000;
-        width: min(480px, calc(100vw - 32px));
-        background: #ffffff;
-        border: 1.5px solid #e0ddd8;
-        border-top: 3px solid #1900ff;
-        box-shadow: 0 8px 48px rgba(0,0,0,0.18), 0 2px 12px rgba(25,0,255,0.12);
-        transition: transform 0.5s cubic-bezier(0.16,1,0.3,1), opacity 0.4s;
-        opacity: 0;
-        padding: 0;
-        font-family: 'DM Sans', 'Sora', sans-serif;
-      }
-      #pwa-banner.show {
-        transform: translateX(-50%) translateY(0);
-        opacity: 1;
-      }
-      #pwa-banner-inner {
-        display: flex;
-        align-items: flex-start;
-        gap: 14px;
-        padding: 18px 20px;
-      }
-      #pwa-banner-icon {
-        flex-shrink: 0;
-        width: 48px;
-        height: 48px;
-        background: rgba(25,0,255,0.08);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-      }
-      #pwa-banner-body { flex: 1; min-width: 0; }
-      #pwa-banner-title {
-        font-weight: 700;
-        font-size: 15px;
-        color: #0a0a0a;
-        letter-spacing: 0.3px;
-        margin-bottom: 4px;
-      }
-      #pwa-banner-sub {
-        font-size: 12.5px;
-        color: #888;
-        line-height: 1.6;
-        margin-bottom: 12px;
-      }
-      #pwa-banner-steps {
-        margin-bottom: 14px;
-      }
-      .pwa-step {
-        display: flex;
-        align-items: flex-start;
-        gap: 10px;
-        margin-bottom: 8px;
-        font-size: 13px;
-        color: #444;
-        line-height: 1.5;
-      }
-      .pwa-step-num {
-        width: 20px;
-        height: 20px;
-        background: #1900ff;
-        color: #fff;
-        font-size: 10px;
-        font-weight: 700;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        flex-shrink: 0;
-        margin-top: 1px;
-      }
-      #pwa-banner-actions {
-        display: flex;
-        gap: 8px;
-        flex-wrap: wrap;
-        align-items: center;
-      }
-      #pwa-install-now {
-        background: #1900ff;
-        color: #fff;
-        border: none;
-        padding: 9px 20px;
-        font-size: 12px;
-        font-weight: 700;
-        letter-spacing: 1.5px;
-        text-transform: uppercase;
-        cursor: pointer;
-        font-family: inherit;
-        transition: background 0.2s;
-      }
-      #pwa-install-now:hover { background: #1200b3; }
-      #pwa-how-btn {
-        background: transparent;
-        color: #1900ff;
-        border: 1.5px solid rgba(25,0,255,0.35);
-        padding: 8px 16px;
-        font-size: 12px;
-        font-weight: 600;
-        letter-spacing: 1px;
-        text-transform: uppercase;
-        cursor: pointer;
-        font-family: inherit;
-        transition: all 0.2s;
-      }
-      #pwa-how-btn:hover { border-color: #1900ff; background: rgba(25,0,255,0.06); }
-      #pwa-dismiss-btn {
-        background: transparent;
-        border: none;
-        color: #aaa;
-        font-size: 12px;
-        cursor: pointer;
-        font-family: inherit;
-        margin-left: auto;
-        padding: 4px 8px;
-      }
-      #pwa-dismiss-btn:hover { color: #444; }
-      #pwa-ios-arrow {
-        display: none;
-        position: fixed;
-        bottom: 28px;
-        left: 50%;
-        transform: translateX(-50%);
-        z-index: 999001;
-        font-size: 28px;
-        animation: pwa-bounce 1s infinite;
-        pointer-events: none;
-      }
-      @keyframes pwa-bounce {
-        0%,100% { transform: translateX(-50%) translateY(0); }
-        50% { transform: translateX(-50%) translateY(-8px); }
-      }
-      @media (max-width: 480px) {
-        #pwa-banner { bottom: 36px; }
-      }
-    `;
-    document.head.appendChild(style);
-  }
-
-  function showInstallBanner(mode) {
-    injectBannerHTML();
-    const banner = document.getElementById('pwa-banner');
-    const sub = document.getElementById('pwa-banner-sub');
-    const steps = document.getElementById('pwa-banner-steps');
-    const installBtn = document.getElementById('pwa-install-now');
-    const howBtn = document.getElementById('pwa-how-btn');
-
-    if (mode === 'prompt') {
-      // Chrome/Android — one-tap install available
-      sub.textContent = 'Add MindSpace to your home screen for instant access — works offline too.';
-      sub.style.display = 'block';
-      installBtn.style.display = 'inline-block';
-      howBtn.style.display = 'none';
-      steps.style.display = 'none';
-    } else if (mode === 'ios') {
-      // iOS Safari — manual steps required
-      sub.textContent = 'Install MindSpace on your iPhone/iPad for the full app experience:';
-      sub.style.display = 'block';
-      installBtn.style.display = 'none';
-      howBtn.style.display = 'none';
-      steps.style.display = 'block';
-      steps.innerHTML = `
-        <div class="pwa-step"><span class="pwa-step-num">1</span><span>Tap the <strong>Share button</strong> <span style="font-size:16px">⎙</span> at the bottom of your browser</span></div>
-        <div class="pwa-step"><span class="pwa-step-num">2</span><span>Scroll down and tap <strong>"Add to Home Screen"</strong></span></div>
-        <div class="pwa-step"><span class="pwa-step-num">3</span><span>Tap <strong>"Add"</strong> in the top right — done!</span></div>`;
-    } else {
-      // Desktop or other — show generic guide
-      sub.textContent = 'Install MindSpace as an app on your device:';
-      sub.style.display = 'block';
-      installBtn.style.display = deferredPrompt ? 'inline-block' : 'none';
-      howBtn.style.display = 'inline-block';
-      steps.style.display = 'none';
-    }
-
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => { banner.classList.add('show'); });
     });
+  });
+}
+
+// ── Install Prompt (Add to Home Screen) ──
+let deferredPrompt = null;
+window.addEventListener('beforeinstallprompt', e => {
+  e.preventDefault();
+  deferredPrompt = e;
+  // Show install button if it exists on this page
+  const installBtn = document.getElementById('pwa-install-btn');
+  if (installBtn) installBtn.style.display = 'flex';
+});
+
+async function installPWA() {
+  if (!deferredPrompt) return;
+  deferredPrompt.prompt();
+  const { outcome } = await deferredPrompt.userChoice;
+  console.log('[PWA] Install prompt outcome:', outcome);
+  deferredPrompt = null;
+  const installBtn = document.getElementById('pwa-install-btn');
+  if (installBtn) installBtn.style.display = 'none';
+}
+window.installPWA = installPWA;
+
+window.addEventListener('appinstalled', () => {
+  console.log('[PWA] MindSpace installed successfully!');
+  deferredPrompt = null;
+});
+
+// ── Update Banner ──
+function showUpdateBanner() {
+  const existing = document.getElementById('pwa-update-banner');
+  if (existing) return;
+  const banner = document.createElement('div');
+  banner.id = 'pwa-update-banner';
+  banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:999999;background:#1900ff;color:#fff;padding:10px 16px;display:flex;align-items:center;justify-content:space-between;font-family:DM Sans,sans-serif;font-size:13px;gap:12px';
+  banner.innerHTML = '<span>🔄 A new version of MindSpace is available.</span><button onclick="window.location.reload()" style="background:#fff;color:#1900ff;border:none;padding:6px 16px;font-size:12px;font-weight:700;letter-spacing:1px;text-transform:uppercase;cursor:pointer;font-family:inherit">Update</button>';
+  document.body.prepend(banner);
+}
+
+// ── Offline Queue for chat messages ──
+const MSG_QUEUE_KEY = 'mindspace_offline_queue';
+function queueMessage(msgData) {
+  const q = JSON.parse(localStorage.getItem(MSG_QUEUE_KEY) || '[]');
+  q.push({ ...msgData, queued_at: Date.now() });
+  localStorage.setItem(MSG_QUEUE_KEY, JSON.stringify(q));
+  // Register background sync if supported
+  if ('serviceWorker' in navigator && 'SyncManager' in window) {
+    navigator.serviceWorker.ready.then(reg => reg.sync.register('sync-messages'));
   }
-
-  function showHowTo() {
-    const steps = document.getElementById('pwa-banner-steps');
-    const howBtn = document.getElementById('pwa-how-btn');
-    const ua2 = navigator.userAgent;
-    let html = '';
-    if (/chrome/i.test(ua2) && !/edge/i.test(ua2)) {
-      html = `
-        <div class="pwa-step"><span class="pwa-step-num">1</span><span>Click the <strong>menu (⋮)</strong> in the top-right of Chrome</span></div>
-        <div class="pwa-step"><span class="pwa-step-num">2</span><span>Select <strong>"Install MindSpace"</strong> or <strong>"Add to Home screen"</strong></span></div>
-        <div class="pwa-step"><span class="pwa-step-num">3</span><span>Click <strong>"Install"</strong> in the dialog — you're all set!</span></div>`;
-    } else if (/edg/i.test(ua2)) {
-      html = `
-        <div class="pwa-step"><span class="pwa-step-num">1</span><span>Click the <strong>menu (…)</strong> in the top-right of Edge</span></div>
-        <div class="pwa-step"><span class="pwa-step-num">2</span><span>Select <strong>"Apps"</strong> → <strong>"Install this site as an app"</strong></span></div>
-        <div class="pwa-step"><span class="pwa-step-num">3</span><span>Click <strong>"Install"</strong> to confirm</span></div>`;
-    } else if (/firefox/i.test(ua2)) {
-      html = `
-        <div class="pwa-step"><span class="pwa-step-num">1</span><span>Firefox doesn't support PWA install directly</span></div>
-        <div class="pwa-step"><span class="pwa-step-num">2</span><span>Open this page in <strong>Chrome</strong> or <strong>Edge</strong> for easy installation</span></div>
-        <div class="pwa-step"><span class="pwa-step-num">3</span><span>Or bookmark this page for quick access</span></div>`;
-    } else {
-      html = `
-        <div class="pwa-step"><span class="pwa-step-num">1</span><span>Open this page in <strong>Chrome</strong> (Android) or <strong>Safari</strong> (iPhone/iPad)</span></div>
-        <div class="pwa-step"><span class="pwa-step-num">2</span><span>Look for <strong>"Add to Home Screen"</strong> in your browser menu</span></div>
-        <div class="pwa-step"><span class="pwa-step-num">3</span><span>Tap <strong>"Add"</strong> or <strong>"Install"</strong> to confirm</span></div>`;
-    }
-    steps.innerHTML = html;
-    steps.style.display = 'block';
-    if (howBtn) howBtn.style.display = 'none';
+}
+async function sendQueuedMessages() {
+  const q = JSON.parse(localStorage.getItem(MSG_QUEUE_KEY) || '[]');
+  if (!q.length || !window.sb) return;
+  const remaining = [];
+  for (const msg of q) {
+    try {
+      const { error } = await window.sb.from('messages').insert(msg);
+      if (error) remaining.push(msg);
+    } catch { remaining.push(msg); }
   }
-
-  function hidePWABanner() {
-    const banner = document.getElementById('pwa-banner');
-    if (banner) { banner.classList.remove('show'); setTimeout(() => banner.remove(), 500); }
-  }
-
-  function dismissBanner() {
-    hidePWABanner();
-    localStorage.setItem('mindspace_pwa_dismissed', '1');
-  }
-
-  async function triggerInstall() {
-    if (deferredPrompt) {
-      deferredPrompt.prompt();
-      const { outcome } = await deferredPrompt.userChoice;
-      deferredPrompt = null;
-      if (outcome === 'accepted') hidePWABanner();
-    } else {
-      showHowTo();
-    }
-  }
-
-  // ── Update Banner ──
-  function showUpdateBanner() {
-    if (document.getElementById('pwa-update-banner')) return;
-    const b = document.createElement('div');
-    b.id = 'pwa-update-banner';
-    b.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999999;background:#1900ff;color:#fff;padding:10px 20px;display:flex;align-items:center;justify-content:space-between;font-family:DM Sans,Sora,sans-serif;font-size:13px;gap:12px;box-shadow:0 2px 12px rgba(0,0,0,0.2)';
-    b.innerHTML = '<span>🔄 A new version of MindSpace is ready.</span><button onclick="window.location.reload()" style="background:#fff;color:#1900ff;border:none;padding:7px 18px;font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;cursor:pointer">UPDATE NOW</button>';
-    document.body.prepend(b);
-  }
-
-  // ── Offline message queue ──
-  var MSG_QUEUE_KEY = 'mindspace_offline_queue';
-  window.queueMessage = function(msgData) {
-    var q = JSON.parse(localStorage.getItem(MSG_QUEUE_KEY) || '[]');
-    q.push(Object.assign({}, msgData, { queued_at: Date.now() }));
-    localStorage.setItem(MSG_QUEUE_KEY, JSON.stringify(q));
-    if ('serviceWorker' in navigator && 'SyncManager' in window) {
-      navigator.serviceWorker.ready.then(function(reg) { reg.sync.register('sync-messages'); });
-    }
-  };
-  window.sendQueuedMessages = async function() {
-    var q = JSON.parse(localStorage.getItem(MSG_QUEUE_KEY) || '[]');
-    if (!q.length || !window.sb) return;
-    var remaining = [];
-    for (var msg of q) {
-      try { var r = await window.sb.from('messages').insert(msg); if (r.error) remaining.push(msg); }
-      catch(e) { remaining.push(msg); }
-    }
-    localStorage.setItem(MSG_QUEUE_KEY, JSON.stringify(remaining));
-  };
-  window.addEventListener('online', window.sendQueuedMessages);
-
-  // Expose globals
-  window.triggerInstall = triggerInstall;
-  window.installPWA = triggerInstall;
-  window.dismissPWABanner = dismissBanner;
-
-})();
+  localStorage.setItem(MSG_QUEUE_KEY, JSON.stringify(remaining));
+  if (!remaining.length) console.log('[PWA] Offline queue flushed.');
+}
+// Try flushing queue when back online
+window.addEventListener('online', sendQueuedMessages);
+window.queueMessage = queueMessage;
+window.sendQueuedMessages = sendQueuedMessages;
 </script>
 </body>
 </html>
