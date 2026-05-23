@@ -636,6 +636,9 @@
         <button class="nav-item" onclick="showPage('frozen')" data-page="frozen">
           <span class="icon">❄️</span> Frozen Accounts
         </button>
+        <button class="nav-item" onclick="showPage('notifications')" data-page="notifications">
+          <span class="icon">🔔</span> Send Notifications
+        </button>
       </nav>
 
       <div class="sidebar-footer">
@@ -701,6 +704,15 @@
 
 <script>
 // ── STATE ──
+// ── SERVICE ROLE CLIENT (bypasses RLS for superadmin reads) ──
+// Get this from: Supabase Dashboard → Project Settings → API → service_role key
+// Keep this file server-side / behind auth — never expose service_role to regular users.
+const SUPABASE_SERVICE_ROLE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx0d21sZ21pcHZqZmJvYWd3eWN0Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3OTM4MTU3OCwiZXhwIjoyMDk0OTU3NTc4fQ.HfKAZkmDBgnoS0q6WtiAxrTLYmnU7_W95OPY0ZwzoDc';
+
+const sbAdmin = (SUPABASE_SERVICE_ROLE_KEY && SUPABASE_SERVICE_ROLE_KEY !== 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx0d21sZ21pcHZqZmJvYWd3eWN0Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3OTM4MTU3OCwiZXhwIjoyMDk0OTU3NTc4fQ.HfKAZkmDBgnoS0q6WtiAxrTLYmnU7_W95OPY0ZwzoDc')
+  ? supabase.createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } })
+  : sb; // fallback to anon client — add service role key above to bypass RLS
+
 let currentUser = null;
 let currentPage = 'dashboard';
 let allUsers = [];
@@ -745,6 +757,7 @@ async function saSignOut() {
 }
 
 async function getProfile(id) {
+  // Must use sb (auth client) here — called during login before sbAdmin session exists
   const { data } = await sb.from('profiles').select('*').eq('id', id).single();
   return data;
 }
@@ -788,6 +801,7 @@ function showPage(page) {
   else if (page === 'conversations') renderConversations();
   else if (page === 'flagged') renderFlagged();
   else if (page === 'frozen') renderFrozen();
+  else if (page === 'notifications') renderNotifications();
 }
 
 function openSidebar() {
@@ -802,22 +816,56 @@ function closeSidebar() {
 
 // ── DASHBOARD ──
 async function renderDashboard() {
-  const [
-    { count: totalUsers },
-    { count: totalConvs },
-    { count: frozenCount },
-    { count: flaggedCount },
-    { count: msgCount }
-  ] = await Promise.all([
-    sb.from('profiles').select('*', { count: 'exact', head: true }).eq('role', 'user'),
-    sb.from('conversations').select('*', { count: 'exact', head: true }),
-    sb.from('profiles').select('*', { count: 'exact', head: true }).eq('is_frozen', true),
-    sb.from('conversations').select('*', { count: 'exact', head: true }).eq('flagged', true),
-    sb.from('messages').select('*', { count: 'exact', head: true })
-  ]);
+  // ── DEBUG: run each query individually and show results on screen ──
+  const debugResults = [];
+  const run = async (label, query) => {
+    try {
+      const res = await query;
+      const rows = res.data || [];
+      debugResults.push({ label, count: rows.length, error: res.error?.message || null, data: rows });
+      return rows;
+    } catch(e) {
+      debugResults.push({ label, count: 0, error: e.message, data: [] });
+      return [];
+    }
+  };
+
+  const allProfiles    = await run('profiles (no filter)',          sbAdmin.from('profiles').select('id, role, display_name'));
+  const allConvs       = await run('conversations (all)',           sbAdmin.from('conversations').select('id'));
+  const frozenProfiles = await run('profiles (is_frozen=true)',     sbAdmin.from('profiles').select('id').eq('is_frozen', true));
+  const flaggedConvs   = await run('conversations (flagged=true)',  sbAdmin.from('conversations').select('id').eq('flagged', true));
+  const allMessages    = await run('messages (all)',                sbAdmin.from('messages').select('id'));
+
+  const totalUsers  = allProfiles.filter(p => p.role === 'user').length;
+  const totalConvs  = allConvs.length;
+  const frozenCount = frozenProfiles.length;
+  const flaggedCount= flaggedConvs.length;
+  const msgCount    = allMessages.length;
+  const rolesFound  = [...new Set(allProfiles.map(p => p.role))].join(', ') || 'none';
+
+  // Render debug panel + stats immediately so we can see what is happening
+  const isServiceRole = sbAdmin !== sb;
+  const debugHtml = `
+    <div style="background:#12141a;border:1px solid #ff6584;border-radius:10px;padding:16px 20px;margin-bottom:24px;font-family:'JetBrains Mono',monospace;font-size:11px;">
+      <div style="color:#ff6584;font-weight:700;font-size:12px;margin-bottom:12px;">🔍 DEBUG PANEL — remove after issue is resolved</div>
+      <div style="margin-bottom:8px;color:${isServiceRole ? '#43e97b' : '#f7971e'};">
+        Client: ${isServiceRole ? '✅ Service Role (bypasses RLS)' : '⚠️ Anon Key (RLS active) — add SUPABASE_SERVICE_ROLE_KEY'}
+      </div>
+      ${debugResults.map(d => `
+        <div style="margin-bottom:4px;color:${d.error ? '#ff6584' : '#43e97b'};">
+          ${d.error ? '✗' : '✓'} <b>${d.label}</b>: <b>${d.count}</b> rows
+          ${d.error ? ' — ERR: ' + d.error : ''}
+        </div>`).join('')}
+      <div style="margin-top:10px;border-top:1px solid #2a2d3a;padding-top:10px;color:#888;">
+        All roles in profiles table: <b style="color:#ccc;">${rolesFound}</b><br>
+        Computed totalUsers (role=user): <b style="color:#ccc;">${totalUsers}</b>
+      </div>
+    </div>
+  `;
+  document.getElementById('page-content').innerHTML = debugHtml + '<div class="loading"><div class="spinner"></div></div>';
 
   // Recent activity (last 7 days messages per day)
-  const { data: recentMsgs } = await sb.from('messages')
+  const { data: recentMsgs } = await sbAdmin.from('messages')
     .select('created_at')
     .gte('created_at', new Date(Date.now() - 7 * 86400000).toISOString())
     .order('created_at', { ascending: true });
@@ -843,16 +891,15 @@ async function renderDashboard() {
   const labels = dayArr.map(d => `<span>${d.label}</span>`).join('');
 
   // Unread count
-  const { count: unread } = await sb.from('conversations')
-    .select('*', { count: 'exact', head: true })
-    .eq('unread_admin', true);
+  const { data: unreadData } = await sbAdmin.from('conversations').select('id').eq('unread_admin', true);
+  const unread = (unreadData || []).length;
 
   if (unread > 0) {
     const b = document.getElementById('unread-badge');
     b.textContent = unread; b.style.display = '';
   }
 
-  document.getElementById('page-content').innerHTML = `
+  document.getElementById('page-content').innerHTML = debugHtml + `
     <div style="margin-bottom:8px;font-size:12px;color:var(--text3);font-weight:600;letter-spacing:2px;text-transform:uppercase;">#RiseWithIMPACT — SuperAdmin Control Centre</div>
 
     <div class="stats-grid">
@@ -908,7 +955,7 @@ async function renderDashboard() {
 
 // ── USERS ──
 async function renderUsers(filter = '', roleFilter = '') {
-  let query = sb.from('profiles').select('*, conversations(count)').order('created_at', { ascending: false });
+  let query = sbAdmin.from('profiles').select('*, conversations(count)').order('created_at', { ascending: false });
   if (roleFilter) query = query.eq('role', roleFilter);
   else query = query.eq('role', 'user');
 
@@ -963,7 +1010,7 @@ async function renderUsers(filter = '', roleFilter = '') {
 
 // ── ADMINS ──
 async function renderAdmins() {
-  const { data: admins } = await sb.from('profiles').select('*').in('role', ['admin','superadmin']).order('created_at');
+  const { data: admins } = await sbAdmin.from('profiles').select('*').in('role', ['admin','superadmin']).order('created_at');
 
   const rows = (admins || []).map(u => `
     <tr>
@@ -995,7 +1042,7 @@ async function renderAdmins() {
   `).join('') || '<tr><td colspan="5"><div class="empty"><div class="icon">🎓</div><p>No counsellors found</p></div></td></tr>';
 
   // Get all regular users to promote
-  const { data: users } = await sb.from('profiles').select('id,display_name').eq('role','user').order('display_name').limit(100);
+  const { data: users } = await sbAdmin.from('profiles').select('id,display_name').eq('role','user').order('display_name').limit(100);
 
   const userOptions = (users || []).map(u =>
     `<option value="${u.id}">${esc(u.display_name)}</option>`
@@ -1033,7 +1080,7 @@ async function promoteSelected() {
 }
 
 async function changeRole(userId, newRole, name) {
-  const { error } = await sb.from('profiles').update({ role: newRole }).eq('id', userId);
+  const { error } = await sbAdmin.from('profiles').update({ role: newRole }).eq('id', userId);
   if (error) { toast('Failed to update role: ' + error.message, 'error'); return; }
   toast(`${name} is now ${newRole} ✓`, 'success');
   if (currentPage === 'admins') renderAdmins();
@@ -1042,7 +1089,7 @@ async function changeRole(userId, newRole, name) {
 
 // ── CONVERSATIONS ──
 async function renderConversations(filter = '') {
-  const { data: convs } = await sb.from('conversations')
+  const { data: convs } = await sbAdmin.from('conversations')
     .select('*, profiles(display_name, is_frozen)')
     .order('updated_at', { ascending: false })
     .limit(80);
@@ -1091,7 +1138,7 @@ async function renderConversations(filter = '') {
 
 // ── FLAGGED ──
 async function renderFlagged() {
-  const { data: convs } = await sb.from('conversations')
+  const { data: convs } = await sbAdmin.from('conversations')
     .select('*, profiles(display_name)')
     .eq('flagged', true)
     .order('updated_at', { ascending: false });
@@ -1129,14 +1176,14 @@ async function renderFlagged() {
 }
 
 async function unflagConv(id) {
-  await sb.from('conversations').update({ flagged: false }).eq('id', id);
+  await sbAdmin.from('conversations').update({ flagged: false }).eq('id', id);
   toast('Conversation unflagged ✓', 'success');
   renderFlagged();
 }
 
 // ── FROZEN ──
 async function renderFrozen() {
-  const { data: users } = await sb.from('profiles').select('*').eq('is_frozen', true).order('display_name');
+  const { data: users } = await sbAdmin.from('profiles').select('*').eq('is_frozen', true).order('display_name');
 
   if (!users || users.length === 0) {
     document.getElementById('page-content').innerHTML = `
@@ -1175,9 +1222,149 @@ async function renderFrozen() {
   `;
 }
 
+// ── NOTIFICATIONS ──
+async function renderNotifications() {
+  // Fetch all users for targeted push
+  const { data: users } = await sbAdmin.from('profiles').select('id,display_name,email').eq('role','user').order('display_name');
+  const userOptions = (users || []).map(u => `<option value="${u.id}">${esc(u.display_name || u.email)}</option>`).join('');
+
+  document.getElementById('page-content').innerHTML = `
+    <div style="margin-bottom:8px;font-size:12px;color:var(--text3);font-weight:600;letter-spacing:2px;text-transform:uppercase;">#RiseWithIMPACT — Push Notifications</div>
+
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:20px;margin-bottom:24px;">
+
+      <!-- BROADCAST CARD -->
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:24px;">
+        <div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:4px;">📢 Broadcast to Everyone</div>
+        <div style="font-size:12px;color:var(--text2);margin-bottom:18px;">Send a push notification to ALL users who have notifications enabled on their devices.</div>
+        <label style="display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bottom:5px;text-transform:uppercase;letter-spacing:1px;">Title</label>
+        <input id="bc-title" type="text" value="MindSpace" placeholder="Notification title"
+          style="width:100%;padding:10px 12px;border-radius:8px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:14px;font-family:inherit;margin-bottom:12px;outline:none;box-sizing:border-box;"/>
+        <label style="display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bottom:5px;text-transform:uppercase;letter-spacing:1px;">Message</label>
+        <textarea id="bc-body" placeholder="Your message to all users..." rows="3"
+          style="width:100%;padding:10px 12px;border-radius:8px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:14px;font-family:inherit;resize:vertical;margin-bottom:12px;outline:none;box-sizing:border-box;"></textarea>
+        <label style="display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bottom:5px;text-transform:uppercase;letter-spacing:1px;">Link (optional)</label>
+        <input id="bc-url" type="text" value="/chat.html" placeholder="/chat.html"
+          style="width:100%;padding:10px 12px;border-radius:8px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:14px;font-family:inherit;margin-bottom:18px;outline:none;box-sizing:border-box;"/>
+        <button onclick="sendBroadcastNotif()" class="btn-sm promote" style="width:100%;padding:12px;font-size:13px;border-radius:8px;justify-content:center;">
+          📢 Send to All Users
+        </button>
+        <div id="bc-result" style="margin-top:10px;font-size:12px;color:var(--text2);min-height:18px;"></div>
+      </div>
+
+      <!-- TARGETED CARD -->
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:24px;">
+        <div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:4px;">🎯 Send to Specific User</div>
+        <div style="font-size:12px;color:var(--text2);margin-bottom:18px;">Send a push notification to one specific user's device.</div>
+        <label style="display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bottom:5px;text-transform:uppercase;letter-spacing:1px;">Select User</label>
+        <select id="tg-user" style="width:100%;padding:10px 12px;border-radius:8px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:14px;font-family:inherit;margin-bottom:12px;outline:none;box-sizing:border-box;">
+          <option value="">-- Choose a user --</option>
+          ${userOptions}
+        </select>
+        <label style="display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bottom:5px;text-transform:uppercase;letter-spacing:1px;">Title</label>
+        <input id="tg-title" type="text" value="MindSpace" placeholder="Notification title"
+          style="width:100%;padding:10px 12px;border-radius:8px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:14px;font-family:inherit;margin-bottom:12px;outline:none;box-sizing:border-box;"/>
+        <label style="display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bottom:5px;text-transform:uppercase;letter-spacing:1px;">Message</label>
+        <textarea id="tg-body" placeholder="Your message..." rows="3"
+          style="width:100%;padding:10px 12px;border-radius:8px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:14px;font-family:inherit;resize:vertical;margin-bottom:12px;outline:none;box-sizing:border-box;"></textarea>
+        <label style="display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bottom:5px;text-transform:uppercase;letter-spacing:1px;">Link (optional)</label>
+        <input id="tg-url" type="text" value="/chat.html" placeholder="/chat.html"
+          style="width:100%;padding:10px 12px;border-radius:8px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:14px;font-family:inherit;margin-bottom:18px;outline:none;box-sizing:border-box;"/>
+        <button onclick="sendTargetedNotif()" class="btn-sm view" style="width:100%;padding:12px;font-size:13px;border-radius:8px;justify-content:center;">
+          🎯 Send to User
+        </button>
+        <div id="tg-result" style="margin-top:10px;font-size:12px;color:var(--text2);min-height:18px;"></div>
+      </div>
+    </div>
+
+    <!-- INFO BOX -->
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px 24px;">
+      <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:10px;">ℹ️ How Push Notifications Work</div>
+      <div style="font-size:13px;color:var(--text2);line-height:1.8;">
+        Push notifications are delivered by the <strong>send-push</strong> Supabase Edge Function to every device where a user has enabled notifications.<br>
+        Users must have opened MindSpace, clicked <em>"Enable Notifications"</em>, and granted browser permission — then their device is registered automatically.<br>
+        <strong>Setup required:</strong> Deploy the Edge Function with <code style="background:var(--surface2);padding:2px 6px;border-radius:4px;">npx supabase functions deploy send-push</code> and set VAPID secrets as described in the code comments.
+      </div>
+    </div>
+  `;
+}
+
+// ── Shared helper: POST directly to the Edge Function ──
+// Supabase's gateway requires an Authorization header — we use the anon key.
+// The Edge Function itself does NO role check; it just sends the push.
+async function callPushFunction(payload) {
+  const res = await fetch(`${SUPABASE_URL}/functions/v1/send-push`, {
+    method: 'POST',
+    headers: {
+      'Content-Type':  'application/json',
+      'apikey':        SUPABASE_ANON_KEY,
+      'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+    },
+    body: JSON.stringify(payload)
+  });
+
+  let json = {};
+  try { json = await res.json(); } catch(_) {}
+
+  if (!res.ok) {
+    throw new Error(json.error || json.message || `HTTP ${res.status}`);
+  }
+  return json;
+}
+
+async function sendBroadcastNotif() {
+  const title = document.getElementById('bc-title')?.value?.trim() || 'MindSpace';
+  const body  = document.getElementById('bc-body')?.value?.trim();
+  const url   = document.getElementById('bc-url')?.value?.trim() || '/chat.html';
+  const resEl = document.getElementById('bc-result');
+
+  if (!body) { resEl.style.color='var(--danger)'; resEl.textContent='⚠ Please enter a message.'; return; }
+  resEl.style.color='var(--text2)'; resEl.textContent='Sending…';
+
+  try {
+    const r = await callPushFunction({
+      broadcast: true,
+      notification: { title, body, url, type: 'announcement' }
+    });
+    resEl.style.color = '#43e97b';
+    resEl.textContent = `✓ Sent to ${r.sent ?? 0} device(s)${r.failed ? ` (${r.failed} failed)` : ''}${r.message ? ' — ' + r.message : ''}.`;
+    toast(`Broadcast sent to ${r.sent ?? 0} device(s)`, 'success');
+  } catch(e) {
+    resEl.style.color = 'var(--danger)';
+    resEl.textContent = '✗ ' + e.message;
+    toast('Push failed: ' + e.message, 'error');
+  }
+}
+
+async function sendTargetedNotif() {
+  const userId = document.getElementById('tg-user')?.value;
+  const title  = document.getElementById('tg-title')?.value?.trim() || 'MindSpace';
+  const body   = document.getElementById('tg-body')?.value?.trim();
+  const url    = document.getElementById('tg-url')?.value?.trim() || '/chat.html';
+  const resEl  = document.getElementById('tg-result');
+
+  if (!userId) { resEl.style.color='var(--danger)'; resEl.textContent='⚠ Please select a user.'; return; }
+  if (!body)   { resEl.style.color='var(--danger)'; resEl.textContent='⚠ Please enter a message.'; return; }
+  resEl.style.color='var(--text2)'; resEl.textContent='Sending…';
+
+  try {
+    const r = await callPushFunction({
+      targetUserId: userId,
+      notification: { title, body, url, type: 'message' }
+    });
+    resEl.style.color = '#43e97b';
+    resEl.textContent = `✓ Sent to ${r.sent ?? 0} device(s)${r.failed ? ` (${r.failed} failed)` : ''}${r.message ? ' — ' + r.message : ''}.`;
+    toast('Notification sent!', 'success');
+  } catch(e) {
+    resEl.style.color = 'var(--danger)';
+    resEl.textContent = '✗ ' + e.message;
+    toast('Push failed: ' + e.message, 'error');
+  }
+}
+
 // ── ACTIONS ──
 async function setFrozen(userId, frozen, name) {
-  const { error } = await sb.from('profiles').update({ is_frozen: frozen }).eq('id', userId);
+  const { error } = await sbAdmin.from('profiles').update({ is_frozen: frozen }).eq('id', userId);
   if (error) { toast('Error: ' + error.message, 'error'); return; }
   toast(`${name} ${frozen ? 'frozen ❄️' : 'unfrozen ✅'}`, frozen ? 'info' : 'success');
   if (currentPage === 'users') renderUsers();
@@ -1186,7 +1373,7 @@ async function setFrozen(userId, frozen, name) {
 
 async function viewUserConvs(userId, name) {
   // Find conversation for this user and open it
-  const { data: conv } = await sb.from('conversations').select('id').eq('user_id', userId).limit(1).single();
+  const { data: conv } = await sbAdmin.from('conversations').select('id').eq('user_id', userId).limit(1).single();
   if (!conv) { toast('No conversations found for this user', 'info'); return; }
   openMsgModal(conv.id, name);
 }
@@ -1205,7 +1392,7 @@ function closeConfirm() {
 
 async function deleteUser(userId, name) {
   // Delete from profiles — cascade will handle conversations/messages
-  const { error } = await sb.from('profiles').delete().eq('id', userId);
+  const { error } = await sbAdmin.from('profiles').delete().eq('id', userId);
   if (error) { toast('Delete failed: ' + error.message, 'error'); return; }
   toast(`${name} deleted`, 'success');
   if (currentPage === 'users') renderUsers();
@@ -1219,7 +1406,7 @@ async function openMsgModal(convId, userName) {
   document.getElementById('msg-modal').classList.add('show');
   document.getElementById('modal-messages').innerHTML = '<div class="loading"><div class="spinner"></div></div>';
 
-  const { data: msgs } = await sb.from('messages')
+  const { data: msgs } = await sbAdmin.from('messages')
     .select('*, profiles(display_name, role)')
     .eq('conversation_id', convId)
     .order('created_at', { ascending: true });
@@ -1259,7 +1446,7 @@ async function openMsgModal(convId, userName) {
   document.getElementById('modal-messages').innerHTML = html;
 
   // Mark as read
-  await sb.from('conversations').update({ unread_admin: false }).eq('id', convId);
+  await sbAdmin.from('conversations').update({ unread_admin: false }).eq('id', convId);
 }
 
 function closeMsgModal() {
@@ -1401,7 +1588,7 @@ document.getElementById('msg-modal').addEventListener('click', e => {
           <div id="pwa-banner-actions">
             <button id="pwa-install-now" onclick="triggerInstall()">Install Now</button>
             <button id="pwa-how-btn" onclick="showHowTo()">How to Install</button>
-            <button id="pwa-dismiss-btn" onclick="dismissBanner()">✕ Not Now</button>
+            <button id="pwa-dismiss-btn" onclick="window.dismissPWABanner ? window.dismissPWABanner() : this.closest('#pwa-banner').remove()">✕ Not Now</button>
           </div>
         </div>
       </div>`;
