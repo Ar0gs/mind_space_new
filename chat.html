@@ -231,6 +231,7 @@ body{background:var(--off);color:var(--ink);font-family:'DM Sans',sans-serif;-we
   </div>
   <div class="topbar-right">
     <span id="user-greeting"></span>
+    <button id="notif-toggle-btn" class="sign-out-btn" onclick="handleNotifToggle()" title="Enable push notifications">🔕 Notifications</button>
     <button class="sign-out-btn" onclick="signOut()">Sign Out</button>
   </div>
 </div>
@@ -269,6 +270,12 @@ body{background:var(--off);color:var(--ink);font-family:'DM Sans',sans-serif;-we
         <a class="resource-link" href="#"><span>🧘</span><span>Grounding Techniques</span></a>
         <a class="resource-link" href="#"><span>📋</span><span>Mood Journal Tips</span></a>
       </div>
+    </div>
+    <div class="sidebar-section">
+      <div class="sidebar-label">Notifications</div>
+      <p style="font-size:11px;font-weight:300;color:var(--muted);line-height:1.6;margin-bottom:10px;">Get alerted when your counsellor replies, even when this tab is in the background.</p>
+      <button id="notif-sidebar-btn" onclick="handleNotifToggle()" style="width:100%;padding:9px 12px;border:1.5px solid var(--border);background:transparent;cursor:pointer;font-family:inherit;font-size:11px;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:var(--muted);transition:all .2s;text-align:center;">🔕 Enable Notifications</button>
+      <div id="notif-sidebar-status" style="font-size:10px;color:var(--muted);margin-top:6px;min-height:14px;text-align:center;"></div>
     </div>
     <div class="rwi-sidebar">#RiseWithIMPACT</div>
   </div>
@@ -397,6 +404,46 @@ const EMOJI_CATS = {
   nature: ['🌿','🌱','🍀','🌸','🌺','🌻','☀️','🌈','🌊','🏔️','🍃','🌙','⭐','🕊️','🦋','🌹']
 };
 
+
+// ── NOTIFICATION TOGGLE ──
+async function handleNotifToggle() {
+  const permission = Notification.permission;
+  if (permission === "granted") {
+    // Already enabled — offer to turn off
+    if (confirm("Notifications are enabled. Turn them off?")) {
+      await MSNotif.unsubscribe();
+      syncNotifUI(false);
+    }
+    return;
+  }
+  if (permission === "denied") {
+    alert("Notifications are blocked by your browser.\n\nTo enable them:\n1. Click the lock/info icon in your address bar\n2. Set Notifications to \"Allow\"\n3. Reload this page");
+    return;
+  }
+  // permission === "default" — request it
+  const granted = await MSNotif.requestPermission();
+  syncNotifUI(granted);
+}
+
+function syncNotifUI(enabled) {
+  const topBtn  = document.getElementById("notif-toggle-btn");
+  const sideBtn = document.getElementById("notif-sidebar-btn");
+  const sideSt  = document.getElementById("notif-sidebar-status");
+  if (topBtn) {
+    topBtn.textContent = enabled ? "🔔 Notifications On" : "🔕 Notifications";
+    topBtn.style.color = enabled ? "var(--sage)" : "";
+  }
+  if (sideBtn) {
+    sideBtn.textContent = enabled ? "🔔 Notifications On" : "🔕 Enable Notifications";
+    sideBtn.style.borderColor = enabled ? "var(--sage)" : "";
+    sideBtn.style.color = enabled ? "var(--sage)" : "";
+  }
+  if (sideSt) {
+    sideSt.textContent = enabled ? "✓ You will receive alerts for new messages." : "";
+    sideSt.style.color = "var(--sage)";
+  }
+}
+
 // ── INIT ──
 async function init() {
   const { data: { session } } = await sb.auth.getSession();
@@ -412,6 +459,8 @@ async function init() {
   document.getElementById('session-start').textContent = new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
 
   initWebRTC(currentUser.id, 'user');
+  // Sync notification button state on load
+  syncNotifUI(Notification.permission === 'granted');
   await getOrCreateConversation();
   initEmojiPicker();
 }
@@ -894,7 +943,7 @@ init();
           <div id="pwa-banner-actions">
             <button id="pwa-install-now" onclick="triggerInstall()">Install Now</button>
             <button id="pwa-how-btn" onclick="showHowTo()">How to Install</button>
-            <button id="pwa-dismiss-btn" onclick="dismissBanner()">✕ Not Now</button>
+            <button id="pwa-dismiss-btn" onclick="window.dismissPWABanner ? window.dismissPWABanner() : this.closest('#pwa-banner').remove()">✕ Not Now</button>
           </div>
         </div>
       </div>`;
