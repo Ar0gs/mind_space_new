@@ -320,6 +320,7 @@ body{height:100%;overflow:hidden;background:var(--off);color:var(--ink);font-fam
     <button class="mnav-tab active" id="mnav-sessions" onclick="mobileTab('sessions')">💬 Sessions</button>
     <button class="mnav-tab" id="mnav-chat" onclick="mobileTab('chat')">💬 Chat</button>
     <button class="mnav-tab" id="mnav-info" onclick="mobileTab('info')">👤 Info</button>
+    <button class="mnav-tab" id="mnav-notifications" onclick="mobileTab('notifications')">🔔 Alerts</button>
   </div>
 </div>
 
@@ -436,6 +437,7 @@ body{height:100%;overflow:hidden;background:var(--off);color:var(--ink);font-fam
 
   <!-- RIGHT: USER DETAIL PANEL -->
   <div class="user-panel" id="user-panel">
+
     <div class="up-section" id="panel-info">
       <div class="up-label">Client Profile</div>
       <div class="up-avatar-lg" id="up-avatar">?</div>
@@ -459,6 +461,94 @@ body{height:100%;overflow:hidden;background:var(--off);color:var(--ink);font-fam
       <div style="font-family:'Anton',sans-serif;font-size:10px;letter-spacing:4px;color:var(--sage);text-transform:uppercase;text-align:center;padding:8px 0">#RiseWithIMPACT</div>
     </div>
   </div>
+
+  <!-- NOTIFICATIONS PANEL — 4th column, toggled by tab/button -->
+  <div id="panel-notifications" style="display:none;flex-direction:column;background:var(--white);border-left:1px solid var(--border);overflow-y:auto;width:260px;flex-shrink:0">
+    <div style="padding:16px;border-bottom:1px solid var(--border);flex-shrink:0">
+      <div style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:4px;text-transform:uppercase;color:var(--dim);margin-bottom:4px;display:flex;align-items:center;gap:6px"><span style="width:12px;height:1px;background:var(--sage);display:inline-block"></span>Push Notifications</div>
+      <div style="font-family:'Anton',sans-serif;font-size:15px;letter-spacing:1px;text-transform:uppercase;color:var(--ink)">Alert Centre</div>
+      <div style="font-size:11px;font-weight:300;color:var(--muted);margin-top:2px">WhatsApp-style phone alerts</div>
+    </div>
+
+    <!-- Admin own notification toggle -->
+    <div style="padding:14px 16px;border-bottom:1px solid var(--border);background:var(--sage-light);flex-shrink:0">
+      <div style="font-size:11px;font-weight:600;color:var(--ink);margin-bottom:3px">Your alert status</div>
+      <div style="font-size:11px;font-weight:300;color:var(--muted);margin-bottom:10px;line-height:1.5">Enable to get notified when users message you</div>
+      <button id="notif-toggle-btn"
+        style="width:100%;padding:10px;background:var(--sage);color:white;border:none;font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;cursor:pointer;font-family:inherit;transition:background .2s"
+        onclick="toggleAdminNotifications()"
+        data-enabled="0">
+        🔕 Enable Notifications
+      </button>
+    </div>
+
+    <!-- Send to specific user -->
+    <div style="padding:16px;border-bottom:1px solid var(--border);flex-shrink:0">
+      <div style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:4px;text-transform:uppercase;color:var(--dim);margin-bottom:12px;display:flex;align-items:center;gap:6px"><span style="width:12px;height:1px;background:var(--sage);display:inline-block"></span>Send to a user</div>
+      <div style="display:grid;gap:10px">
+        <div>
+          <label style="font-size:10px;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:var(--muted);display:block;margin-bottom:4px">Select User</label>
+          <select id="notif-target-user" style="width:100%;background:var(--off);border:1.5px solid var(--border);padding:9px 10px;font-family:'DM Sans',sans-serif;font-size:12px;color:var(--ink);outline:none;transition:border-color .2s">
+            <option value="">— Loading users… —</option>
+          </select>
+        </div>
+        <div>
+          <label style="font-size:10px;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:var(--muted);display:block;margin-bottom:4px">Title</label>
+          <input type="text" id="notif-title" placeholder="Your counsellor replied"
+            style="width:100%;background:var(--off);border:1.5px solid var(--border);padding:9px 10px;font-family:'DM Sans',sans-serif;font-size:12px;color:var(--ink);outline:none;transition:border-color .2s"
+            onfocus="this.style.borderColor='var(--sage)'" onblur="this.style.borderColor='var(--border)'" />
+        </div>
+        <div>
+          <label style="font-size:10px;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:var(--muted);display:block;margin-bottom:4px">Message</label>
+          <textarea id="notif-body" rows="3" placeholder="I've replied to your message. Tap to read."
+            style="width:100%;background:var(--off);border:1.5px solid var(--border);padding:9px 10px;font-family:'DM Sans',sans-serif;font-size:12px;color:var(--ink);outline:none;resize:vertical;transition:border-color .2s;line-height:1.5"
+            onfocus="this.style.borderColor='var(--sage)'" onblur="this.style.borderColor='var(--border)'"></textarea>
+        </div>
+        <div style="display:flex;gap:6px">
+          <button onclick="sendPushToUser()"
+            style="flex:1;padding:10px 6px;background:var(--sage);color:white;border:none;font-family:'DM Sans',sans-serif;font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;cursor:pointer;transition:background .2s"
+            onmouseover="this.style.background='var(--sage-lo)'" onmouseout="this.style.background='var(--sage)'">
+            📲 Send
+          </button>
+          <button onclick="sendLocalTestNotif()"
+            style="padding:10px 8px;background:transparent;color:var(--sage);border:1.5px solid var(--sage);font-family:'DM Sans',sans-serif;font-size:10px;font-weight:600;letter-spacing:1px;text-transform:uppercase;cursor:pointer;transition:all .2s;white-space:nowrap"
+            title="Fires a test notification in this browser right now">
+            🧪 Test
+          </button>
+        </div>
+        <div id="notif-send-result" style="font-size:11px;font-family:'DM Mono',monospace;min-height:14px;color:var(--muted);line-height:1.4"></div>
+      </div>
+    </div>
+
+    <!-- Broadcast -->
+    <div style="padding:16px;flex-shrink:0">
+      <div style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:4px;text-transform:uppercase;color:var(--dim);margin-bottom:12px;display:flex;align-items:center;gap:6px"><span style="width:12px;height:1px;background:var(--sage);display:inline-block"></span>Broadcast to all</div>
+      <div style="background:rgba(192,57,43,.05);border:1px solid rgba(192,57,43,.15);padding:9px 12px;margin-bottom:10px;font-size:11px;color:#c0392b;font-weight:500;line-height:1.5">
+        ⚠ Sends to every user with push enabled.
+      </div>
+      <div style="display:grid;gap:10px">
+        <div>
+          <label style="font-size:10px;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:var(--muted);display:block;margin-bottom:4px">Title</label>
+          <input type="text" id="broadcast-title" placeholder="MindSpace Update"
+            style="width:100%;background:var(--off);border:1.5px solid var(--border);padding:9px 10px;font-family:'DM Sans',sans-serif;font-size:12px;color:var(--ink);outline:none;transition:border-color .2s"
+            onfocus="this.style.borderColor='var(--sage)'" onblur="this.style.borderColor='var(--border)'" />
+        </div>
+        <div>
+          <label style="font-size:10px;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:var(--muted);display:block;margin-bottom:4px">Message</label>
+          <textarea id="broadcast-body" rows="3" placeholder="Our counsellor is available now. Come chat!"
+            style="width:100%;background:var(--off);border:1.5px solid var(--border);padding:9px 10px;font-family:'DM Sans',sans-serif;font-size:12px;color:var(--ink);outline:none;resize:vertical;transition:border-color .2s;line-height:1.5"
+            onfocus="this.style.borderColor='var(--sage)'" onblur="this.style.borderColor='var(--border)'"></textarea>
+        </div>
+        <button onclick="sendBroadcastNotif()"
+          style="width:100%;padding:10px;background:var(--ink);color:white;border:none;font-family:'DM Sans',sans-serif;font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;cursor:pointer;transition:background .2s"
+          onmouseover="this.style.background='#333'" onmouseout="this.style.background='var(--ink)'">
+          📢 Broadcast to All
+        </button>
+        <div id="broadcast-result" style="font-size:11px;font-family:'DM Mono',monospace;min-height:14px;color:var(--muted);line-height:1.4"></div>
+      </div>
+    </div>
+  </div>
+
 </div>
 
 <!-- INCOMING CALL -->
@@ -1265,6 +1355,109 @@ async function sendQueuedMessages() {
 window.addEventListener('online', sendQueuedMessages);
 window.queueMessage = queueMessage;
 window.sendQueuedMessages = sendQueuedMessages;
+</script>
+<script src="notifications.js"></script>
+
+<!--JS For Push Notification-->
+<script>
+// ── Admin notification panel logic ──
+(async function initAdminNotifPanel() {
+  const { data: { session } } = await sb.auth.getSession();
+  if (!session) return;
+
+  // Init notification system for this admin
+  await MSNotif.init(session.user.id, true);
+
+  // Update the toggle button state based on current permission
+  const btn = document.getElementById('notif-toggle-btn');
+  if (btn) {
+    const granted = Notification.permission === 'granted';
+    btn.textContent = granted ? '🔔 Notifications On' : '🔕 Enable Notifications';
+    btn.dataset.enabled = granted ? '1' : '0';
+  }
+
+  // Load users into the dropdown
+  await loadUsersForNotifDropdown();
+})();
+
+async function loadUsersForNotifDropdown() {
+  const sel = document.getElementById('notif-target-user');
+  if (!sel) return;
+  const { data: users } = await sb.from('profiles').select('id, display_name, email').eq('role', 'user').order('display_name');
+  if (!users) return;
+  sel.innerHTML = '<option value="">— Select a user —</option>' +
+    users.map(u => `<option value="${u.id}">${u.display_name || 'Anonymous'} — ${u.email || ''}</option>`).join('');
+}
+
+async function toggleAdminNotifications() {
+  const btn = document.getElementById('notif-toggle-btn');
+  if (btn?.dataset.enabled === '1') {
+    await MSNotif.unsubscribe();
+  } else {
+    await MSNotif.requestPermission();
+  }
+}
+
+async function sendPushToUser() {
+  const userId = document.getElementById('notif-target-user')?.value;
+  const title  = document.getElementById('notif-title')?.value?.trim();
+  const body   = document.getElementById('notif-body')?.value?.trim();
+  const result = document.getElementById('notif-send-result');
+
+  if (!userId) { result.textContent = '↳ Please select a user.'; result.style.color = '#c0392b'; return; }
+  if (!title)  { result.textContent = '↳ Please enter a title.'; result.style.color = '#c0392b'; return; }
+  if (!body)   { result.textContent = '↳ Please enter a message body.'; result.style.color = '#c0392b'; return; }
+
+  result.textContent = 'Sending…'; result.style.color = 'var(--muted)';
+
+  const { success, error, data } = await MSNotif.adminSendToUser(userId, {
+    title, body, url: '/chat.html', type: 'message'
+  });
+
+  if (success) {
+    result.textContent = `✓ Sent to ${data?.sent || 1} device(s). Delivered like WhatsApp!`;
+    result.style.color = '#27ae60';
+  } else {
+    // Edge function might not be deployed yet — send local as fallback
+    result.textContent = '⚠ Server push not configured (no Edge Function). Sent as local notification instead.';
+    result.style.color = '#e67e22';
+    await MSNotif.sendLocal({ title, body, url: '/chat.html', type: 'message', tag: 'admin-notif-' + userId });
+  }
+}
+
+async function sendBroadcastNotif() {
+  const title = document.getElementById('broadcast-title')?.value?.trim();
+  const body  = document.getElementById('broadcast-body')?.value?.trim();
+  const result = document.getElementById('broadcast-result');
+
+  if (!title) { result.textContent = '↳ Please enter a title.'; result.style.color = '#c0392b'; return; }
+  if (!body)  { result.textContent = '↳ Please enter a message.'; result.style.color = '#c0392b'; return; }
+  if (!confirm(`Broadcast "${title}" to ALL users with notifications enabled?`)) return;
+
+  result.textContent = 'Broadcasting…'; result.style.color = 'var(--muted)';
+
+  const { success, data, error } = await MSNotif.adminBroadcast({ title, body, type: 'announcement' });
+
+  if (success) {
+    result.textContent = `✓ Broadcast sent to ${data?.sent || 0} device(s) (${data?.failed || 0} failed).`;
+    result.style.color = '#27ae60';
+  } else {
+    result.textContent = '⚠ Broadcast requires the Edge Function to be deployed. See setup guide.';
+    result.style.color = '#e67e22';
+  }
+}
+
+async function sendLocalTestNotif() {
+  if (Notification.permission !== 'granted') {
+    await MSNotif.requestPermission();
+    return;
+  }
+  const title = document.getElementById('notif-title')?.value?.trim() || 'MindSpace Test';
+  const body  = document.getElementById('notif-body')?.value?.trim() || 'This is a test notification from your dashboard.';
+  await MSNotif.sendLocal({ title, body, url: '/chat.html', tag: 'test-notif' });
+  document.getElementById('notif-send-result').textContent = '✓ Test notification sent — check your notification tray!';
+  document.getElementById('notif-send-result').style.color = '#27ae60';
+}
 </script>
 </body>
 </html>
