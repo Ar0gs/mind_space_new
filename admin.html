@@ -57,35 +57,38 @@ body{height:100%;overflow:hidden;background:var(--off);color:var(--ink);font-fam
 .mnav-tab:hover:not(.active){color:var(--ink);background:var(--off)}
 @media(max-width:900px){.mobile-nav{display:flex}}
 
-/* MAIN */
-.main{flex:1;display:grid;grid-template-columns:300px 1fr 260px;overflow:hidden;min-height:0}
-@media(max-width:1100px){.main{grid-template-columns:260px 1fr}}
-@media(max-width:900px){.main{grid-template-columns:1fr;display:flex;flex-direction:column;overflow:hidden;height:calc(100dvh - 56px - 48px - 28px)}}
+/* MAIN — Full-screen two-step navigation on all sizes */
+.main{flex:1;display:flex;position:relative;overflow:hidden;min-height:0}
 
-/* PANEL VISIBILITY on mobile */
-@media(max-width:900px){
-  .main{display:flex!important;flex-direction:column;height:calc(100vh - 56px - 48px);overflow:hidden}
-  .conv-list-panel{display:none;flex-direction:column;flex:1;overflow:hidden;height:100%}
-  .chat-panel{display:none;flex-direction:column;flex:1;overflow:hidden;height:100%}
-  .user-panel{display:none!important}
-  .conv-list-panel.mobile-active{display:flex!important}
-  .chat-panel.mobile-active{display:flex!important}
-  .user-panel.mobile-active{display:flex!important;flex-direction:column;flex:1;overflow-y:auto;height:100%}
-  /* Chat panel inner must fill height */
-  .chat-panel.mobile-active #active-chat{display:flex!important;flex-direction:column;height:100%}
-  .chat-panel.mobile-active .messages{flex:1;overflow-y:auto}
-  /* Back button shown on mobile chat */
-  .mob-back-btn{display:flex!important}
+/* PANEL VISIBILITY */
+.conv-list-panel{
+  position:absolute;inset:0;
+  display:flex;flex-direction:column;overflow:hidden;
+  background:var(--white);
+  transition:transform .35s cubic-bezier(.4,0,.2,1);
+  z-index:10;
 }
-@media(min-width:901px){
-  .user-panel{display:flex}
-  .mob-back-btn{display:none!important}
+.chat-panel{
+  position:absolute;inset:0;
+  display:flex;flex-direction:column;overflow:hidden;
+  background:var(--off);
+  transform:translateX(100%);
+  transition:transform .35s cubic-bezier(.4,0,.2,1);
+  z-index:20;
 }
-@media(max-width:1100px) and (min-width:901px){.user-panel{display:none}}
+.chat-panel.panel-open{transform:translateX(0)}
+.user-panel{display:none!important}
 
-/* Mobile back button */
-.mob-back-btn{display:none;align-items:center;gap:8px;background:none;border:none;cursor:pointer;font-family:'DM Sans',sans-serif;font-size:12px;font-weight:600;color:var(--sage);letter-spacing:.5px;text-transform:uppercase;padding:0;flex-shrink:0}
+/* Back button always visible when chat is open */
+.mob-back-btn{display:flex;align-items:center;gap:8px;background:none;border:none;cursor:pointer;font-family:'DM Sans',sans-serif;font-size:12px;font-weight:600;color:var(--sage);letter-spacing:.5px;text-transform:uppercase;padding:0;flex-shrink:0}
 .mob-back-btn svg{width:14px;height:14px;fill:currentColor}
+
+/* Hide old mobile nav since we use slide navigation now */
+.mobile-nav{display:none!important}
+
+/* When chat panel is open, show active-chat */
+.chat-panel.panel-open #active-chat{display:flex!important;flex-direction:column;height:100%}
+.chat-panel.panel-open .messages{flex:1;overflow-y:auto}
 
 /* LEFT - CONVERSATION LIST */
 .conv-list-panel{background:var(--white);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden}
@@ -328,7 +331,7 @@ body{height:100%;overflow:hidden;background:var(--off);color:var(--ink);font-fam
 <div class="main">
 
   <!-- LEFT: CONVERSATION LIST -->
-  <div class="conv-list-panel mobile-active" id="panel-sessions">
+  <div class="conv-list-panel" id="panel-sessions">
     <div class="panel-header">
       <div class="panel-title">Sessions #RiseWithIMPACT</div>
       <input class="search-input" placeholder="Search by name..." id="search-input" oninput="filterConversations(this.value)"/>
@@ -362,7 +365,7 @@ body{height:100%;overflow:hidden;background:var(--off);color:var(--ink);font-fam
 
       <div class="chat-top">
         <div class="chat-user-info">
-          <button class="mob-back-btn" onclick="mobileTab('sessions')" title="Back to sessions">
+          <button class="mob-back-btn" onclick="document.getElementById('panel-chat').classList.remove('panel-open')" title="Back to sessions">
             <svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
             <span>Sessions</span>
           </button>
@@ -683,7 +686,7 @@ async function loadConversations() {
 
   conversations = data || [];
   renderConversationList();
-  updateStats();
+  await updateStats();
 }
 
 function renderConversationList() {
@@ -729,10 +732,22 @@ function renderConversationList() {
   }).join('');
 }
 
-function updateStats() {
-  document.getElementById('stat-total').textContent = conversations.length;
+async function updateStats() {
+  // Active & waiting come from conversations already loaded
   document.getElementById('stat-active').textContent = conversations.filter(c=>c.status==='active').length;
   document.getElementById('stat-waiting').textContent = conversations.filter(c=>c.status==='waiting').length;
+
+  // Total = real user count from profiles table
+  try {
+    const { count, error } = await sb.from('profiles')
+      .select('*', { count: 'exact', head: true })
+      .eq('role', 'user');
+    if (!error) document.getElementById('stat-total').textContent = count ?? 0;
+  } catch(e) {
+    // Fallback: count distinct user_ids in conversations
+    const unique = new Set(conversations.map(c => c.user_id)).size;
+    document.getElementById('stat-total').textContent = unique;
+  }
 }
 
 function setFilter(mode, btn) {
@@ -757,20 +772,12 @@ async function selectConversation(convId, userId) {
 
   // Show chat (hide no-selection)
   document.getElementById('no-selection').style.display = 'none';
-  const activeChat = document.getElementById('active-chat');
-  activeChat.style.display = 'flex';
-  activeChat.style.flexDirection = 'column';
-  activeChat.style.height = '100%';
 
   renderConversationList();
 
-  // On mobile: switch to chat tab automatically
-  if (window.innerWidth <= 900) {
-    // Update chat tab label with user name
-    const chatTabBtn = document.getElementById('mnav-chat');
-    if (chatTabBtn) chatTabBtn.innerHTML = '💬 ' + (name.length > 12 ? name.slice(0,12)+'…' : name);
-    mobileTab('chat');
-  }
+  // On all screen sizes: slide the chat panel in
+  document.getElementById('panel-chat').classList.add('panel-open');
+  // No need for mobileTab anymore
 
   const conv = conversations.find(c => c.id === convId);
   const name = conv?.profiles?.display_name || 'Anonymous';
@@ -1204,6 +1211,7 @@ async function closeConversation() {
   if (!confirm('Close this session?')) return;
   await sb.from('conversations').update({ status: 'closed', updated_at: new Date().toISOString() }).eq('id', activeConvId);
   await loadConversations();
+  document.getElementById('panel-chat').classList.remove('panel-open');
   document.getElementById('active-chat').style.display = 'none';
   document.getElementById('no-selection').style.display = 'flex';
   activeConvId = null;
