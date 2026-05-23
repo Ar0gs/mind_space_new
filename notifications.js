@@ -1,32 +1,36 @@
 // ============================================================
-// notifications.js — MindSpace Push Notification Engine v2
-// Drop this AFTER config.js and auth.js on every page.
-//
-// CHANGES IN v2:
-//   - Auto-shows a soft "Enable notifications" nudge bar on chat.html
-//   - Auto-initialises when window.currentUser becomes available
-//   - Auto-wires realtime listener when window.conversationId is set
-//   - Fires WhatsApp-style local pop when a message arrives on hidden tab
-//   - Admin: sends server push via Edge Function (falls back to local)
-//   - Zero config needed beyond VAPID_PUBLIC_KEY in config.js
+// notifications.js — MindSpace Push Notification Engine v3
+// ============================================================
+// Flow:
+//   1. Page loads → auto-init polls for window.currentUser
+//   2. Once user is known, _userId is set and SW subscription checked
+//   3. User clicks "Enable" → requestNotificationPermission()
+//      → browser asks permission → if granted → subscribe to push
+//      → save subscription (endpoint + keys) to push_subscriptions table
+//   4. Superadmin sends push via Edge Function → SW receives it
+//      → shows OS-level notification even if tab is closed
+//   5. Local realtime listener also fires a notification when a
+//      new message arrives and the tab is hidden
 // ============================================================
 
 (function (global) {
   'use strict';
 
-  // ── State ──
+  // ── Internal state ──
   let _pushSubscription = null;
-  let _userId = null;
-  let _isAdmin = false;
-  let _realtimeChannel = null;
+  let _userId           = null;
+  let _isAdmin          = false;
+  let _realtimeChannel  = null;
+  let _initDone         = false;
 
-  // ── Public init: call after user is confirmed logged in ──
-  async function initNotifications(userId, isAdmin = false) {
-    _userId = userId;
-    _isAdmin = isAdmin;
+  // ── Public init ──
+  async function initNotifications(userId, isAdmin) {
+    _userId  = userId;
+    _isAdmin = !!isAdmin;
+    _initDone = true;
 
     if (!('Notification' in window)) {
-      console.warn('[Notif] Notifications not supported in this browser.');
+      console.warn('[Notif] Notifications not supported.');
       return;
     }
     if (!('serviceWorker' in navigator)) {
@@ -34,104 +38,57 @@
       return;
     }
 
-    // Listen for messages from the service worker
+    // Listen for SW → page messages
     navigator.serviceWorker.addEventListener('message', _handleSWMessage);
 
-    // If already granted, silently subscribe
+    // Already granted → silently resubscribe (re-saves to DB on each login)
     if (Notification.permission === 'granted') {
       await _subscribeToPush();
     }
 
-    // Update any existing toggle button
-    _updateNotifButton(Notification.permission === 'granted');
+    _syncAllButtons(Notification.permission === 'granted');
 
-    // On the user chat page, show a gentle nudge bar if permission not yet asked
+    // Show gentle nudge bar on user chat page if not yet decided
     if (!_isAdmin && Notification.permission === 'default') {
       _showNudgeBar();
     }
   }
 
-  // ── Gentle nudge bar (user-facing only, not intrusive) ──
-  function _showNudgeBar() {
-    // Don't show if already dismissed this session
-    if (sessionStorage.getItem('ms_notif_nudge_dismissed')) return;
-    // Don't show if already shown
-    if (document.getElementById('ms-notif-nudge')) return;
-
-    // Wait a few seconds before showing so the page loads first
-    setTimeout(() => {
-      const bar = document.createElement('div');
-      bar.id = 'ms-notif-nudge';
-      bar.style.cssText = [
-        'position:fixed',
-        'bottom:36px',       // above the #RiseWithIMPACT ticker
-        'left:50%',
-        'transform:translateX(-50%) translateY(80px)',
-        'z-index:99998',
-        'background:#fff',
-        'border:1.5px solid #E0DDD8',
-        'border-top:3px solid #1900ff',
-        'box-shadow:0 8px 32px rgba(0,0,0,.14),0 2px 8px rgba(25,0,255,.1)',
-        'padding:14px 18px',
-        'display:flex',
-        'align-items:center',
-        'gap:12px',
-        'max-width:min(420px,calc(100vw - 32px))',
-        'width:max-content',
-        'font-family:DM Sans,sans-serif',
-        'font-size:13px',
-        'transition:transform .5s cubic-bezier(.16,1,.3,1),opacity .4s',
-        'opacity:0',
-      ].join(';');
-
-      bar.innerHTML = `
-        <span style="font-size:22px;flex-shrink:0">🔔</span>
-        <div style="flex:1;min-width:0">
-          <div style="font-weight:600;color:#0a0a0a;font-size:13px;margin-bottom:2px">Get session alerts</div>
-          <div style="font-size:11px;color:#888;font-weight:300;line-height:1.5">Enable notifications so your counsellor can reach you even when this tab is in the background.</div>
-        </div>
-        <div style="display:flex;flex-direction:column;gap:5px;flex-shrink:0">
-          <button id="ms-notif-enable-btn" style="background:#1900ff;color:#fff;border:none;padding:7px 14px;font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;cursor:pointer;font-family:inherit;white-space:nowrap">Enable</button>
-          <button id="ms-notif-dismiss-btn" style="background:transparent;color:#aaa;border:none;padding:2px 6px;font-size:11px;cursor:pointer;font-family:inherit">Not now</button>
-        </div>
-      `;
-
-      document.body.appendChild(bar);
-
-      // Animate in
-      requestAnimationFrame(() => requestAnimationFrame(() => {
-        bar.style.transform = 'translateX(-50%) translateY(0)';
-        bar.style.opacity = '1';
-      }));
-
-      document.getElementById('ms-notif-enable-btn').onclick = async () => {
-        _dismissNudge();
-        await requestNotificationPermission();
-      };
-      document.getElementById('ms-notif-dismiss-btn').onclick = () => {
-        _dismissNudge();
-        sessionStorage.setItem('ms_notif_nudge_dismissed', '1');
-      };
-    }, 4000);
-  }
-
-  function _dismissNudge() {
-    const bar = document.getElementById('ms-notif-nudge');
-    if (!bar) return;
-    bar.style.transform = 'translateX(-50%) translateY(80px)';
-    bar.style.opacity = '0';
-    setTimeout(() => bar.remove(), 500);
-  }
-
-  // ── Request permission & subscribe ──
+  // ── Request permission + subscribe ──
+  // This is what the Enable button calls.
   async function requestNotificationPermission() {
     if (!('Notification' in window)) {
-      showNotifToast('Notifications are not supported on this browser.', 'error');
+      _showToast('Notifications are not supported on this browser.', 'error');
+      return false;
+    }
+    if (Notification.permission === 'denied') {
+      _showToast(
+        'Notifications are blocked. Tap the 🔒 lock icon in your address bar → Notifications → Allow, then reload.',
+        'error', 7000
+      );
       return false;
     }
 
-    if (Notification.permission === 'denied') {
-      showNotifToast('Notifications are blocked. Please enable them in your browser settings.', 'error');
+    // FIX Bug 1+2: grab userId immediately from window.currentUser before
+    // falling back to the poll. chat.html sets window.currentUser = session.user
+    // in init() — this ensures we never show the "please wait" message when
+    // the user is already logged in and init() has completed.
+    if (!_userId && global.currentUser?.id) {
+      _userId = global.currentUser.id;
+    }
+
+    // Also trigger MSNotif.init if it hasn't run yet (e.g. fast click on load)
+    if (!_initDone && _userId) {
+      await initNotifications(_userId, _isAdmin);
+    }
+
+    // If still no userId after all that, poll briefly
+    if (!_userId) {
+      await _waitForUserId(4000);
+    }
+
+    if (!_userId) {
+      _showToast('Still loading your session — please try again in a moment.', 'warning');
       return false;
     }
 
@@ -139,59 +96,14 @@
 
     if (permission === 'granted') {
       await _subscribeToPush();
-      showNotifToast('✓ Notifications enabled — you\'ll be alerted for new messages!', 'success');
-      _updateNotifButton(true);
+      _showToast('✓ Notifications enabled — you\'ll be alerted when your counsellor replies!', 'success');
+      _syncAllButtons(true);
+      _dismissNudge();
       return true;
     } else {
-      showNotifToast('Notifications were not enabled. You can enable them later.', 'warning');
+      _showToast('Notifications were not enabled. You can enable them any time from the menu.', 'warning');
+      _syncAllButtons(false);
       return false;
-    }
-  }
-
-  // ── Create or retrieve browser push subscription ──
-  async function _subscribeToPush() {
-    try {
-      const reg = await navigator.serviceWorker.ready;
-      let sub = await reg.pushManager.getSubscription();
-
-      if (!sub) {
-        const vapidKey = global.VAPID_PUBLIC_KEY;
-        if (vapidKey) {
-          sub = await reg.pushManager.subscribe({
-            userVisibleOnly: true,
-            applicationServerKey: _urlBase64ToUint8Array(vapidKey)
-          });
-        } else {
-          console.info('[Notif] No VAPID_PUBLIC_KEY found — server push disabled. Local notifications still work.');
-          return;
-        }
-      }
-
-      _pushSubscription = sub;
-      await _saveSubscriptionToSupabase(sub);
-    } catch (err) {
-      console.error('[Notif] Push subscription error:', err);
-    }
-  }
-
-  // ── Save push subscription to Supabase ──
-  async function _saveSubscriptionToSupabase(sub) {
-    if (!_userId || !global.sb) return;
-
-    const subJson = sub.toJSON();
-    const { error } = await global.sb.from('push_subscriptions').upsert({
-      user_id:    _userId,
-      endpoint:   subJson.endpoint,
-      p256dh:     subJson.keys?.p256dh || '',
-      auth:       subJson.keys?.auth || '',
-      user_agent: navigator.userAgent.substring(0, 200),
-      updated_at: new Date().toISOString()
-    }, { onConflict: 'user_id,endpoint' });
-
-    if (error) {
-      console.error('[Notif] Failed to save subscription to Supabase:', error);
-    } else {
-      console.log('[Notif] Push subscription saved.');
     }
   }
 
@@ -201,36 +113,99 @@
       const reg = await navigator.serviceWorker.ready;
       const sub = await reg.pushManager.getSubscription();
       if (sub) {
+        const endpoint = sub.endpoint;
         await sub.unsubscribe();
         if (_userId && global.sb) {
           await global.sb.from('push_subscriptions')
             .delete()
             .eq('user_id', _userId)
-            .eq('endpoint', sub.endpoint);
+            .eq('endpoint', endpoint);
         }
         _pushSubscription = null;
-        _updateNotifButton(false);
-        showNotifToast('Notifications turned off.', 'info');
       }
+      _syncAllButtons(false);
+      _showToast('Notifications turned off.', 'info');
     } catch (err) {
       console.error('[Notif] Unsubscribe error:', err);
     }
   }
 
-  // ── Send a LOCAL notification (fires immediately via SW, works when tab is hidden) ──
+  // ── Subscribe to push and save to Supabase ──
+  async function _subscribeToPush() {
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      let sub = await reg.pushManager.getSubscription();
+
+      if (!sub) {
+        const vapidKey = global.VAPID_PUBLIC_KEY;
+        if (!vapidKey) {
+          console.info('[Notif] No VAPID_PUBLIC_KEY — server push disabled; local notifications still work.');
+          return;
+        }
+        sub = await reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: _urlBase64ToUint8Array(vapidKey)
+        });
+      }
+
+      _pushSubscription = sub;
+      await _saveSubscription(sub);
+    } catch (err) {
+      console.error('[Notif] Push subscription error:', err);
+    }
+  }
+
+  // ── Save subscription to Supabase push_subscriptions table ──
+  async function _saveSubscription(sub) {
+    if (!_userId || !global.sb) return;
+
+    const json   = sub.toJSON();
+    const record = {
+      user_id:    _userId,
+      endpoint:   json.endpoint,
+      p256dh:     json.keys?.p256dh  || '',
+      auth:       json.keys?.auth    || '',
+      user_agent: navigator.userAgent.substring(0, 200),
+      updated_at: new Date().toISOString()
+    };
+
+    // Try upsert with onConflict on 'endpoint' alone first (most DB schemas)
+    // Fall back to plain insert/update if that fails
+    let { error } = await global.sb
+      .from('push_subscriptions')
+      .upsert(record, { onConflict: 'endpoint' });
+
+    if (error) {
+      // Fallback: try delete + insert
+      await global.sb.from('push_subscriptions')
+        .delete()
+        .eq('user_id', _userId)
+        .eq('endpoint', json.endpoint);
+
+      const res2 = await global.sb.from('push_subscriptions').insert(record);
+      error = res2.error;
+    }
+
+    if (error) {
+      console.error('[Notif] Failed to save subscription:', error);
+    } else {
+      console.log('[Notif] ✓ Subscription saved for user', _userId);
+    }
+  }
+
+  // ── Send a local notification via the SW (works when tab is hidden) ──
   async function sendLocalNotification({ title, body, url, tag, type = 'message' }) {
     if (Notification.permission !== 'granted') return;
-
     try {
       const reg = await navigator.serviceWorker.ready;
       await reg.showNotification(title || 'MindSpace', {
-        body: body || 'You have a new message.',
-        icon: 'icons/icon-192.png',
-        badge: 'icons/icon-96.png',
-        tag: tag || 'mindspace-local',
+        body:    body || 'You have a new message.',
+        icon:    'icons/icon-192.png',
+        badge:   'icons/icon-96.png',
+        tag:     tag || 'mindspace-local',
         renotify: true,
         vibrate: [200, 100, 200],
-        data: { url: url || '/chat.html', type },
+        data:    { url: url || '/chat.html', type },
         actions: type === 'message'
           ? [{ action: 'reply', title: '💬 Reply' }, { action: 'dismiss', title: 'Dismiss' }]
           : []
@@ -240,119 +215,329 @@
     }
   }
 
-  // ── Realtime listener: fires a notification when a new message arrives ──
-  // This is the core WhatsApp-style behaviour for in-session alerts.
-  // Call this once conversationId is known (done automatically below).
+  // ── Realtime listener: fires local notification when a message arrives ──
   function setupRealtimeNotifications(conversationId) {
     if (!global.sb || !conversationId) return;
     if (_realtimeChannel) {
       global.sb.removeChannel(_realtimeChannel);
+      _realtimeChannel = null;
     }
 
     _realtimeChannel = global.sb.channel('notif-' + conversationId)
       .on('postgres_changes', {
-        event: 'INSERT',
+        event:  'INSERT',
         schema: 'public',
-        table: 'messages',
+        table:  'messages',
         filter: 'conversation_id=eq.' + conversationId
       }, async payload => {
         const msg = payload.new;
-        // Don't notify about your own messages
-        if (msg.sender_id === _userId) return;
-        // Only fire the pop-up if the tab is hidden / not focused
-        if (!document.hidden) return;
-
-        const senderName = _isAdmin
-          ? (msg.sender_name || 'User')
-          : 'Your counsellor';
+        if (msg.sender_id === _userId) return;     // own message
+        if (!document.hidden)          return;     // tab is visible — no pop needed
 
         const preview = (msg.content || '').substring(0, 100) +
           (msg.content?.length > 100 ? '…' : '');
 
-        const notifBody = preview ||
-          (msg.message_type === 'voice'  ? '🎙 Voice message' :
-           msg.message_type === 'image'  ? '📷 Image' :
-           msg.message_type === 'video'  ? '🎥 Video' : 'New message');
+        const body = preview ||
+          (msg.message_type === 'voice' ? '🎙 Voice message' :
+           msg.message_type === 'image' ? '📷 Image' :
+           msg.message_type === 'video' ? '🎥 Video' : 'New message');
 
         await sendLocalNotification({
-          title:  'MindSpace — ' + senderName,
-          body:   notifBody,
-          url:    _isAdmin ? 'admin.html' : 'chat.html',
-          tag:    'mindspace-chat-' + conversationId,
-          type:   'message'
+          title: _isAdmin ? 'MindSpace — New message from user' : 'MindSpace — Your counsellor replied',
+          body,
+          url:  _isAdmin ? 'admin.html' : 'chat.html',
+          tag:  'mindspace-chat-' + conversationId,
+          type: 'message'
         });
-
-        // Also attempt server push so it reaches the phone if the browser is closed
-        // This requires the Edge Function to be deployed (see setup guide)
-        if (_isAdmin && msg.sender_id) {
-          // Admin got a message from a user — no need to push back to admin here;
-          // the local notification above already handles it.
-        } else if (!_isAdmin) {
-          // User got a message from counsellor — local notif fires above.
-          // Server push to the user was already sent by admin's panel or Supabase trigger.
-        }
       })
       .subscribe();
 
     return _realtimeChannel;
   }
 
-  // ── ADMIN: Send push to a specific user via Edge Function ──
+  // ── Admin helpers (used by admin.html / superadmin.html) ──
   async function adminSendPushToUser(targetUserId, { title, body, url, type = 'message' }) {
-    if (!global.sb) return { success: false, error: 'Supabase not ready' };
-
-    try {
-      const { data, error } = await global.sb.functions.invoke('send-push', {
-        body: {
-          targetUserId,
-          notification: { title, body, url: url || '/chat.html', type }
-        }
-      });
-
-      if (error) {
-        console.error('[Notif] Edge function error:', error);
-        return { success: false, error: error.message };
-      }
-      return { success: true, data };
-    } catch (err) {
-      console.error('[Notif] adminSendPushToUser error:', err);
-      return { success: false, error: err.message };
-    }
+    return _callEdgeFunction({
+      targetUserId,
+      notification: { title, body, url: url || '/chat.html', type }
+    });
   }
 
-  // ── ADMIN: Broadcast push to ALL users ──
   async function adminBroadcastPush({ title, body, url, type = 'announcement' }) {
-    if (!global.sb) return { success: false, error: 'Supabase not ready' };
+    return _callEdgeFunction({
+      broadcast: true,
+      notification: { title, body, url: url || '/chat.html', type }
+    });
+  }
 
+  // Calls the send-push Edge Function with the current user's session token
+  // so the function's role check passes.
+  async function _callEdgeFunction(payload) {
+    if (!global.sb) return { success: false, error: 'Supabase not ready' };
     try {
-      const { data, error } = await global.sb.functions.invoke('send-push', {
-        body: {
-          broadcast: true,
-          notification: { title, body, url: url || '/chat.html', type }
-        }
+      const { data: { session } } = await global.sb.auth.getSession();
+      const token = session?.access_token || SUPABASE_ANON_KEY;
+
+      const res = await fetch(`${SUPABASE_URL}/functions/v1/send-push`, {
+        method:  'POST',
+        headers: {
+          'Content-Type':  'application/json',
+          'apikey':        SUPABASE_ANON_KEY,
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify(payload)
       });
 
-      if (error) {
-        console.error('[Notif] Broadcast push error:', error);
-        return { success: false, error: error.message };
-      }
-      return { success: true, data };
+      let json = {};
+      try { json = await res.json(); } catch (_) {}
+
+      if (!res.ok) throw new Error(json.error || json.message || `HTTP ${res.status}`);
+      return { success: true, data: json };
     } catch (err) {
+      console.error('[Notif] Edge function error:', err);
       return { success: false, error: err.message };
     }
   }
 
-  // ── Handle messages from service worker (notification actions, call decline, etc.) ──
+  // ── Nudge bar ──
+  /*
+  function _showNudgeBar() {
+    if (sessionStorage.getItem('ms_notif_nudge_dismissed')) return;
+    if (document.getElementById('ms-notif-nudge')) return;
+
+    setTimeout(() => {
+      const bar = document.createElement('div');
+      bar.id = 'ms-notif-nudge';
+      bar.style.cssText = [
+        'position:fixed', 'bottom:40px', 'left:50%',
+        'transform:translateX(-50%) translateY(100px)',
+        'z-index:99998', 'background:#fff',
+        'border:1.5px solid #E0DDD8', 'border-top:3px solid #1900ff',
+        'box-shadow:0 8px 32px rgba(0,0,0,.14)',
+        'padding:14px 18px', 'display:flex', 'align-items:center', 'gap:12px',
+        'max-width:min(420px,calc(100vw - 32px))', 'width:max-content',
+        'font-family:DM Sans,sans-serif', 'font-size:13px',
+        'transition:transform .5s cubic-bezier(.16,1,.3,1),opacity .4s',
+        'opacity:0'
+      ].join(';');
+
+      bar.innerHTML = `
+        <span style="font-size:22px;flex-shrink:0">🔔</span>
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:600;color:#0a0a0a;font-size:13px;margin-bottom:2px">Get session alerts</div>
+          <div style="font-size:11px;color:#888;font-weight:300;line-height:1.5">Enable notifications so your counsellor can reach you even when this tab is in the background.</div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:5px;flex-shrink:0">
+          <button id="ms-notif-enable-btn" style="background:#1900ff;color:#fff;border:none;padding:8px 16px;font-size:12px;font-weight:700;letter-spacing:1px;text-transform:uppercase;cursor:pointer;font-family:inherit;white-space:nowrap;min-height:36px;">Enable</button>
+          <button id="ms-notif-dismiss-btn" style="background:transparent;color:#aaa;border:none;padding:2px 6px;font-size:11px;cursor:pointer;font-family:inherit">Not now</button>
+        </div>
+      `;
+
+      document.body.appendChild(bar);
+
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        bar.style.transform = 'translateX(-50%) translateY(0)';
+        bar.style.opacity   = '1';
+      }));
+
+      document.getElementById('ms-notif-enable-btn').addEventListener('click', async () => {
+        _dismissNudge();
+        await requestNotificationPermission();
+      });
+      document.getElementById('ms-notif-dismiss-btn').addEventListener('click', () => {
+        _dismissNudge();
+        sessionStorage.setItem('ms_notif_nudge_dismissed', '1');
+      });
+    }, 4000);
+  }
+
+  function _dismissNudge() {
+    const bar = document.getElementById('ms-notif-nudge');
+    if (!bar) return;
+    bar.style.transform = 'translateX(-50%) translateY(100px)';
+    bar.style.opacity   = '0';
+    setTimeout(() => bar.remove(), 500);
+  }
+  */
+
+function _showNudgeBar() {
+  if (sessionStorage.getItem('ms_notif_nudge_dismissed')) return;
+  if (document.getElementById('ms-notif-nudge')) return;
+
+  setTimeout(() => {
+    const bar = document.createElement('div');
+    bar.id = 'ms-notif-nudge';
+
+    // FIX 1: z-index raised to 999999 — above the #rwi-ticker (z-index:99999)
+    // which was sitting on top of this bar and swallowing all click events.
+    //
+    // FIX 2: bottom raised to 36px (above the 28px ticker) + extra 8px breathing room.
+    //
+    // FIX 3: width changed from 'max-content' (overflows on mobile) to
+    // 'calc(100vw - 32px)' capped at 440px — bar now fits any screen.
+    //
+    // FIX 4: buttons are built as real DOM nodes with addEventListener (not
+    // innerHTML) so there is zero chance of an ID lookup timing issue.
+    bar.style.cssText = [
+      'position:fixed',
+      'bottom:36px',
+      'left:50%',
+      'transform:translateX(-50%) translateY(120px)',
+      'z-index:999999',
+      'background:#fff',
+      'border:1.5px solid #E0DDD8',
+      'border-top:3px solid #1900ff',
+      'box-shadow:0 8px 32px rgba(0,0,0,.18)',
+      'padding:14px 16px',
+      'display:flex',
+      'align-items:center',
+      'gap:12px',
+      'width:min(440px,calc(100vw - 32px))',
+      'box-sizing:border-box',
+      'font-family:DM Sans,sans-serif',
+      'font-size:13px',
+      'transition:transform .5s cubic-bezier(.16,1,.3,1),opacity .4s',
+      'opacity:0',
+      'pointer-events:all'
+    ].join(';');
+
+    // ── Bell + text block ──
+    const bell = document.createElement('span');
+    bell.style.cssText = 'font-size:22px;flex-shrink:0';
+    bell.textContent = '🔔';
+
+    const textWrap = document.createElement('div');
+    textWrap.style.cssText = 'flex:1;min-width:0';
+
+    const title = document.createElement('div');
+    title.style.cssText = 'font-weight:600;color:#0a0a0a;font-size:13px;margin-bottom:2px';
+    title.textContent = 'Get session alerts';
+
+    const sub = document.createElement('div');
+    sub.style.cssText = 'font-size:11px;color:#888;font-weight:300;line-height:1.5';
+    sub.textContent = 'Enable notifications so your counsellor can reach you even when this tab is in the background.';
+
+    textWrap.appendChild(title);
+    textWrap.appendChild(sub);
+
+    // ── Button column ──
+    const btnCol = document.createElement('div');
+    btnCol.style.cssText = 'display:flex;flex-direction:column;gap:6px;flex-shrink:0';
+
+    const enableBtn = document.createElement('button');
+    enableBtn.style.cssText = [
+      'background:#1900ff', 'color:#fff', 'border:none',
+      'padding:10px 18px', 'font-size:12px', 'font-weight:700',
+      'letter-spacing:1px', 'text-transform:uppercase',
+      'cursor:pointer', 'font-family:inherit',
+      'white-space:nowrap', 'min-height:40px',
+      'pointer-events:all', '-webkit-tap-highlight-color:transparent'
+    ].join(';');
+    enableBtn.textContent = 'Enable';
+
+    const dismissBtn = document.createElement('button');
+    dismissBtn.style.cssText = [
+      'background:transparent', 'color:#aaa', 'border:none',
+      'padding:4px 6px', 'font-size:11px',
+      'cursor:pointer', 'font-family:inherit',
+      'pointer-events:all', '-webkit-tap-highlight-color:transparent'
+    ].join(';');
+    dismissBtn.textContent = 'Not now';
+
+    btnCol.appendChild(enableBtn);
+    btnCol.appendChild(dismissBtn);
+
+    bar.appendChild(bell);
+    bar.appendChild(textWrap);
+    bar.appendChild(btnCol);
+
+    document.body.appendChild(bar);
+
+    // Animate in after two frames so the initial transform is painted first
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      bar.style.transform = 'translateX(-50%) translateY(0)';
+      bar.style.opacity   = '1';
+    }));
+
+    // ── Event listeners attached directly to the DOM nodes — no ID lookup ──
+    enableBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      _dismissNudge();
+      await requestNotificationPermission();
+    });
+
+    dismissBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      _dismissNudge();
+      sessionStorage.setItem('ms_notif_nudge_dismissed', '1');
+    });
+
+    // Touch events for mobile (belt-and-suspenders alongside click)
+    enableBtn.addEventListener('touchend', async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      _dismissNudge();
+      await requestNotificationPermission();
+    }, { passive: false });
+
+    dismissBtn.addEventListener('touchend', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      _dismissNudge();
+      sessionStorage.setItem('ms_notif_nudge_dismissed', '1');
+    }, { passive: false });
+
+  }, 4000);
+}
+
+function _dismissNudge() {
+  const bar = document.getElementById('ms-notif-nudge');
+  if (!bar) return;
+  bar.style.transform = 'translateX(-50%) translateY(120px)';
+  bar.style.opacity   = '0';
+  setTimeout(() => bar.remove(), 500);
+}
+  
+  // ── Sync every notification button/status element on the page ──
+  function _syncAllButtons(enabled) {
+    // Top-bar button (desktop)
+    const topBtn = document.getElementById('notif-toggle-btn');
+    if (topBtn) {
+      topBtn.textContent = enabled ? '🔔 Notifications On' : '🔕 Notifications';
+      topBtn.style.color = enabled ? 'var(--sage,#1900ff)' : '';
+    }
+    // Sidebar button
+    const sideBtn = document.getElementById('notif-sidebar-btn');
+    const sideSt  = document.getElementById('notif-sidebar-status');
+    if (sideBtn) {
+      sideBtn.textContent    = enabled ? '🔔 Notifications On' : '🔕 Enable Notifications';
+      sideBtn.style.borderColor = enabled ? 'var(--sage,#1900ff)' : '';
+      sideBtn.style.color       = enabled ? 'var(--sage,#1900ff)' : '';
+    }
+    if (sideSt) {
+      sideSt.textContent = enabled ? '✓ You will receive alerts for new messages.' : '';
+      sideSt.style.color = 'var(--sage,#1900ff)';
+    }
+    // Mobile drawer button
+    const drawerBtn = document.getElementById('drawer-notif-btn');
+    const drawerSt  = document.getElementById('drawer-notif-status');
+    if (drawerBtn) {
+      drawerBtn.textContent = enabled ? '🔔 Notifications On' : '🔕 Enable Notifications';
+      drawerBtn.classList.toggle('enabled', enabled);
+    }
+    if (drawerSt) {
+      drawerSt.textContent = enabled ? '✓ You\'ll be alerted when your counsellor replies.' : '';
+    }
+
+    // Also call chat.html's syncNotifUI if it exists (belt-and-suspenders)
+    if (typeof global.syncNotifUI === 'function') global.syncNotifUI(enabled);
+  }
+
+  // ── Handle SW → page messages ──
   function _handleSWMessage(event) {
     const data = event.data;
     if (!data) return;
-
     switch (data.type) {
-      case 'NOTIFICATION_CLICK':
-        if (data.notifData?.conversationId) {
-          console.log('[Notif] Clicked notification for conversation', data.notifData.conversationId);
-        }
-        break;
       case 'DECLINE_CALL':
         if (typeof global.declineCall === 'function') global.declineCall();
         break;
@@ -365,120 +550,123 @@
     }
   }
 
-  // ── UI helpers ──
-  function _updateNotifButton(enabled) {
-    const btn = document.getElementById('notif-toggle-btn');
-    if (!btn) return;
-    btn.textContent = enabled ? '🔔 Notifications On' : '🔕 Enable Notifications';
-    btn.dataset.enabled = enabled ? '1' : '0';
-    btn.style.opacity = enabled ? '1' : '0.7';
+  // ── Wait until window.currentUser is set (up to maxMs) ──
+  // FIX: also tries window.currentUser directly as the fastest path,
+  // since chat.html now sets window.currentUser = session.user in init().
+  function _waitForUserId(maxMs) {
+    return new Promise(resolve => {
+      if (_userId) return resolve();
+
+      // Immediate check — chat.html may have already set window.currentUser
+      const directId = global.currentUser?.id;
+      if (directId) { _userId = directId; return resolve(); }
+
+      const start = Date.now();
+      const t = setInterval(() => {
+        const id = _userId || global.currentUser?.id;
+        if (id) {
+          if (!_userId) _userId = id;
+          clearInterval(t);
+          resolve();
+        } else if (Date.now() - start > maxMs) {
+          clearInterval(t);
+          resolve();
+        }
+      }, 80); // poll more frequently (80ms vs 100ms)
+    });
   }
 
-  function getPermissionState() {
-    return Notification.permission;
-  }
-
-  // ── Toast (uses page's existing showToast or injects a minimal one) ──
-  function showNotifToast(msg, variant = 'info') {
-    if (typeof global.showToast === 'function') {
-      global.showToast(msg);
-      return;
-    }
-    let el = document.getElementById('notif-toast');
+  // ── Toast ──
+  function _showToast(msg, variant = 'info', duration = 4500) {
+    if (typeof global.showToast === 'function') { global.showToast(msg); return; }
+    let el = document.getElementById('ms-notif-toast');
     if (!el) {
       el = document.createElement('div');
-      el.id = 'notif-toast';
+      el.id = 'ms-notif-toast';
       el.style.cssText = [
-        'position:fixed',
-        'bottom:48px',
-        'left:50%',
-        'transform:translateX(-50%) translateY(16px)',
-        'z-index:9999999',
-        'background:#0a0a0a',
-        'color:#fff',
-        'padding:12px 20px',
-        'font-family:DM Sans,sans-serif',
-        'font-size:13px',
-        'max-width:340px',
-        'text-align:center',
-        'opacity:0',
-        'transition:all .4s',
-        'border-left:3px solid #1900ff',
-        'pointer-events:none',
+        'position:fixed', 'bottom:52px', 'left:50%',
+        'transform:translateX(-50%) translateY(20px)',
+        'z-index:9999999', 'background:#0a0a0a', 'color:#fff',
+        'padding:12px 20px', 'font-family:DM Sans,sans-serif', 'font-size:13px',
+        'max-width:min(360px,calc(100vw - 32px))', 'text-align:center',
+        'opacity:0', 'transition:all .35s', 'border-left:3px solid #1900ff',
+        'pointer-events:none', 'line-height:1.5'
       ].join(';');
       document.body.appendChild(el);
     }
     const colors = { success: '#27ae60', error: '#c0392b', warning: '#e67e22', info: '#1900ff' };
     el.style.borderLeftColor = colors[variant] || '#1900ff';
     el.textContent = msg;
-    el.style.opacity = '1';
+    el.style.opacity   = '1';
     el.style.transform = 'translateX(-50%) translateY(0)';
     clearTimeout(el._t);
     el._t = setTimeout(() => {
-      el.style.opacity = '0';
-      el.style.transform = 'translateX(-50%) translateY(16px)';
-    }, 4000);
+      el.style.opacity   = '0';
+      el.style.transform = 'translateX(-50%) translateY(20px)';
+    }, duration);
   }
 
-  // ── Utility ──
+  // ── Utility: VAPID key conversion ──
   function _urlBase64ToUint8Array(base64String) {
     const padding = '='.repeat((4 - base64String.length % 4) % 4);
-    const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+    const base64  = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
     const rawData = window.atob(base64);
     return Uint8Array.from([...rawData].map(c => c.charCodeAt(0)));
   }
 
-  // ── Auto-init on user chat pages ──
-  // Polls until window.currentUser and window.conversationId are available
-  // (set by chat.html's init() function), then wires everything up automatically.
+  // ── Auto-init on user chat page ──
+  // Polls until window.currentUser is available (set by chat.html's init()),
+  // then calls initNotifications and wires up realtime.
   function _autoInit() {
-    const isAdminPage = window.location.pathname.includes('admin');
-    if (isAdminPage) return; // admin pages handle their own init
+    if (window.location.pathname.includes('admin')) return; // admin pages call init manually
 
     let attempts = 0;
     const poll = setInterval(async () => {
       attempts++;
-      if (attempts > 40) { clearInterval(poll); return; } // give up after ~12s
+      if (attempts > 100) { clearInterval(poll); return; } // give up after ~20s
 
+      // FIX: read from window.currentUser which chat.html now explicitly sets
       const userId = global.currentUser?.id;
       const convId = global.conversationId;
 
-      if (userId && !_userId) {
+      if (userId && !_initDone) {
         clearInterval(poll);
+        _userId = userId; // pre-set so requestPermission never sees null
         await initNotifications(userId, false);
         if (convId) setupRealtimeNotifications(convId);
         return;
       }
 
-      // conversationId may arrive after currentUser
-      if (_userId && convId && !_realtimeChannel) {
+      // conversationId may arrive slightly after currentUser
+      if (_initDone && convId && !_realtimeChannel) {
+        clearInterval(poll);
         setupRealtimeNotifications(convId);
       }
-    }, 300);
+    }, 200); // poll at 200ms — faster than before so UI is ready sooner
   }
 
-  // Run auto-init when DOM is ready
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', _autoInit);
   } else {
     _autoInit();
   }
 
-  // ── Expose public API ──
+  // ── Public API ──
   global.MSNotif = {
-    init:             initNotifications,
+    init:              initNotifications,
     requestPermission: requestNotificationPermission,
-    unsubscribe:      unsubscribeFromPush,
-    sendLocal:        sendLocalNotification,
-    setupRealtime:    setupRealtimeNotifications,
-    adminSendToUser:  adminSendPushToUser,
-    adminBroadcast:   adminBroadcastPush,
-    getPermissionState,
-    showToast:        showNotifToast
+    unsubscribe:       unsubscribeFromPush,
+    sendLocal:         sendLocalNotification,
+    setupRealtime:     setupRealtimeNotifications,
+    adminSendToUser:   adminSendPushToUser,
+    adminBroadcast:    adminBroadcastPush,
+    callEdgeFunction:  _callEdgeFunction,
+    getPermissionState: () => Notification.permission,
+    showToast:         _showToast
   };
 
-  // Convenience globals (backward compatible)
+  // Backward-compat globals
   global.requestNotificationPermission = requestNotificationPermission;
-  global.sendLocalNotification = sendLocalNotification;
+  global.sendLocalNotification         = sendLocalNotification;
 
 })(window);
