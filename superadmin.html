@@ -709,9 +709,10 @@
 // Keep this file server-side / behind auth — never expose service_role to regular users.
 const SUPABASE_SERVICE_ROLE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx0d21sZ21pcHZqZmJvYWd3eWN0Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3OTM4MTU3OCwiZXhwIjoyMDk0OTU3NTc4fQ.HfKAZkmDBgnoS0q6WtiAxrTLYmnU7_W95OPY0ZwzoDc';
 
-const sbAdmin = (SUPABASE_SERVICE_ROLE_KEY && SUPABASE_SERVICE_ROLE_KEY !== 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx0d21sZ21pcHZqZmJvYWd3eWN0Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3OTM4MTU3OCwiZXhwIjoyMDk0OTU3NTc4fQ.HfKAZkmDBgnoS0q6WtiAxrTLYmnU7_W95OPY0ZwzoDc')
-  ? supabase.createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } })
-  : sb; // fallback to anon client — add service role key above to bypass RLS
+// Always use service role key — it's already set above, so create the admin client directly
+const sbAdmin = supabase.createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+  auth: { persistSession: false, autoRefreshToken: false }
+});
 
 let currentUser = null;
 let currentPage = 'dashboard';
@@ -1224,19 +1225,108 @@ async function renderFrozen() {
 
 // ── NOTIFICATIONS ──
 async function renderNotifications() {
-  // Fetch all users for targeted push
-  const { data: users } = await sbAdmin.from('profiles').select('id,display_name,email').eq('role','user').order('display_name');
-  const userOptions = (users || []).map(u => `<option value="${u.id}">${esc(u.display_name || u.email)}</option>`).join('');
+  // Fetch users and their subscription counts in parallel
+  const [usersRes, subsRes] = await Promise.all([
+    sbAdmin.from('profiles').select('id,display_name,email').eq('role','user').order('display_name'),
+    sbAdmin.from('push_subscriptions').select('user_id, endpoint, updated_at, user_agent')
+  ]);
+
+  const users = usersRes.data || [];
+  const allSubs = subsRes.data || [];
+
+  // Build a map: userId → [subscriptions]
+  const subsByUser = {};
+  for (const s of allSubs) {
+    if (!subsByUser[s.user_id]) subsByUser[s.user_id] = [];
+    subsByUser[s.user_id].push(s);
+  }
+
+  const totalSubscribers = new Set(allSubs.map(s => s.user_id)).size;
+  const totalDevices = allSubs.length;
+
+  // Build user options for the targeted dropdown — show device count
+  const userOptions = users.map(u => {
+    const devCount = (subsByUser[u.id] || []).length;
+    const label = `${u.display_name || u.email}${devCount > 0 ? ` (${devCount} device${devCount>1?'s':''})` : ' — no subscription'}`;
+    return `<option value="${u.id}" ${devCount === 0 ? 'style="color:#888"' : ''}>${esc(label)}</option>`;
+  }).join('');
+
+  // Build subscriber list table
+  const subscriberRows = users.map(u => {
+    const subs = subsByUser[u.id] || [];
+    const hasNotif = subs.length > 0;
+    const lastSeen = subs.length > 0
+      ? new Date(Math.max(...subs.map(s => new Date(s.updated_at)))).toLocaleDateString()
+      : '—';
+    // Guess device type from user_agent
+    const deviceLabels = subs.map(s => {
+      const ua = s.user_agent || '';
+      if (/iphone|ipad/i.test(ua)) return '🍎 iOS';
+      if (/android/i.test(ua)) return '🤖 Android';
+      if (/mobile/i.test(ua)) return '📱 Mobile';
+      return '💻 Desktop';
+    });
+    return `<tr>
+      <td style="padding:10px 12px;font-size:13px;color:var(--text);">${esc(u.display_name || '—')}</td>
+      <td style="padding:10px 12px;font-size:12px;color:var(--text2);">${esc(u.email)}</td>
+      <td style="padding:10px 12px;text-align:center;">
+        <span style="display:inline-block;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:700;letter-spacing:1px;
+          background:${hasNotif ? 'rgba(67,233,123,.15)' : 'rgba(255,255,255,.05)'};
+          color:${hasNotif ? '#43e97b' : '#666'};">
+          ${hasNotif ? '🔔 ON' : '🔕 OFF'}
+        </span>
+      </td>
+      <td style="padding:10px 12px;font-size:12px;color:var(--text2);text-align:center;">${subs.length > 0 ? subs.length : '—'}</td>
+      <td style="padding:10px 12px;font-size:11px;color:var(--text2);">${deviceLabels.join(', ') || '—'}</td>
+      <td style="padding:10px 12px;font-size:11px;color:var(--text2);">${lastSeen}</td>
+      <td style="padding:10px 12px;">
+        ${hasNotif
+          ? `<button onclick="quickSendToUser('${u.id}','${esc(u.display_name || u.email)}')"
+               style="background:rgba(25,0,255,.12);color:#1900ff;border:1px solid rgba(25,0,255,.25);padding:5px 12px;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit;">
+               📨 Send
+             </button>`
+          : `<span style="font-size:11px;color:#555;">No device</span>`}
+      </td>
+    </tr>`;
+  }).join('');
 
   document.getElementById('page-content').innerHTML = `
     <div style="margin-bottom:8px;font-size:12px;color:var(--text3);font-weight:600;letter-spacing:2px;text-transform:uppercase;">#RiseWithIMPACT — Push Notifications</div>
+
+    <!-- STATS ROW -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:24px;">
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px 20px;">
+        <div style="font-size:28px;font-weight:800;color:var(--text);">${totalSubscribers}</div>
+        <div style="font-size:12px;color:var(--text2);margin-top:2px;">Subscribed Users</div>
+      </div>
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px 20px;">
+        <div style="font-size:28px;font-weight:800;color:var(--text);">${totalDevices}</div>
+        <div style="font-size:12px;color:var(--text2);margin-top:2px;">Total Devices</div>
+      </div>
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px 20px;">
+        <div style="font-size:28px;font-weight:800;color:var(--text);">${users.length}</div>
+        <div style="font-size:12px;color:var(--text2);margin-top:2px;">Total Users</div>
+      </div>
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px 20px;">
+        <div style="font-size:28px;font-weight:800;color:${totalSubscribers > 0 ? '#43e97b' : '#666'};">
+          ${users.length > 0 ? Math.round(totalSubscribers / users.length * 100) : 0}%
+        </div>
+        <div style="font-size:12px;color:var(--text2);margin-top:2px;">Opt-in Rate</div>
+      </div>
+    </div>
+
+    ${subsRes.error ? `
+      <div style="background:rgba(255,77,77,.1);border:1px solid rgba(255,77,77,.3);border-radius:8px;padding:14px 18px;margin-bottom:20px;font-size:13px;color:#ff6b6b;">
+        ⚠️ <strong>push_subscriptions table not found.</strong> Run the SQL in <code>push_subscriptions.sql</code> in your Supabase SQL Editor to create it, then reload this page.
+      </div>` : ''}
 
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:20px;margin-bottom:24px;">
 
       <!-- BROADCAST CARD -->
       <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:24px;">
         <div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:4px;">📢 Broadcast to Everyone</div>
-        <div style="font-size:12px;color:var(--text2);margin-bottom:18px;">Send a push notification to ALL users who have notifications enabled on their devices.</div>
+        <div style="font-size:12px;color:var(--text2);margin-bottom:4px;">Send to all <strong>${totalDevices} device(s)</strong> from <strong>${totalSubscribers} subscribed user(s)</strong>.</div>
+        <div style="font-size:11px;color:#666;margin-bottom:16px;">Only users who clicked "Enable Notifications" will receive this.</div>
         <label style="display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bottom:5px;text-transform:uppercase;letter-spacing:1px;">Title</label>
         <input id="bc-title" type="text" value="MindSpace" placeholder="Notification title"
           style="width:100%;padding:10px 12px;border-radius:8px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:14px;font-family:inherit;margin-bottom:12px;outline:none;box-sizing:border-box;"/>
@@ -1246,8 +1336,9 @@ async function renderNotifications() {
         <label style="display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bottom:5px;text-transform:uppercase;letter-spacing:1px;">Link (optional)</label>
         <input id="bc-url" type="text" value="/chat.html" placeholder="/chat.html"
           style="width:100%;padding:10px 12px;border-radius:8px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:14px;font-family:inherit;margin-bottom:18px;outline:none;box-sizing:border-box;"/>
-        <button onclick="sendBroadcastNotif()" class="btn-sm promote" style="width:100%;padding:12px;font-size:13px;border-radius:8px;justify-content:center;">
-          📢 Send to All Users
+        <button onclick="sendBroadcastNotif()" class="btn-sm promote" style="width:100%;padding:12px;font-size:13px;border-radius:8px;justify-content:center;"
+          ${totalDevices === 0 ? 'disabled style="width:100%;padding:12px;font-size:13px;border-radius:8px;justify-content:center;opacity:.45;cursor:not-allowed;"' : ''}>
+          📢 Send to All ${totalDevices > 0 ? `(${totalDevices} device${totalDevices>1?'s':''})` : '— No subscribers yet'}
         </button>
         <div id="bc-result" style="margin-top:10px;font-size:12px;color:var(--text2);min-height:18px;"></div>
       </div>
@@ -1255,7 +1346,7 @@ async function renderNotifications() {
       <!-- TARGETED CARD -->
       <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:24px;">
         <div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:4px;">🎯 Send to Specific User</div>
-        <div style="font-size:12px;color:var(--text2);margin-bottom:18px;">Send a push notification to one specific user's device.</div>
+        <div style="font-size:12px;color:var(--text2);margin-bottom:16px;">Only users with notifications enabled (shown with device count) can receive push.</div>
         <label style="display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bottom:5px;text-transform:uppercase;letter-spacing:1px;">Select User</label>
         <select id="tg-user" style="width:100%;padding:10px 12px;border-radius:8px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:14px;font-family:inherit;margin-bottom:12px;outline:none;box-sizing:border-box;">
           <option value="">-- Choose a user --</option>
@@ -1277,28 +1368,115 @@ async function renderNotifications() {
       </div>
     </div>
 
+    <!-- QUICK SEND MODAL (hidden) -->
+    <div id="qs-modal" style="display:none;position:fixed;inset:0;z-index:9000;background:rgba(0,0,0,.6);align-items:center;justify-content:center;">
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:28px;width:min(420px,90vw);box-sizing:border-box;">
+        <div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:4px;">📨 Quick Send</div>
+        <div id="qs-user-label" style="font-size:12px;color:var(--text2);margin-bottom:18px;"></div>
+        <input id="qs-title" type="text" value="MindSpace" placeholder="Title"
+          style="width:100%;padding:10px 12px;border-radius:8px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:14px;font-family:inherit;margin-bottom:10px;outline:none;box-sizing:border-box;"/>
+        <textarea id="qs-body" placeholder="Message..." rows="3"
+          style="width:100%;padding:10px 12px;border-radius:8px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:14px;font-family:inherit;resize:vertical;margin-bottom:16px;outline:none;box-sizing:border-box;"></textarea>
+        <div style="display:flex;gap:10px;">
+          <button onclick="sendQuickNotif()" class="btn-sm promote" style="flex:1;padding:11px;font-size:13px;border-radius:8px;justify-content:center;">Send 📨</button>
+          <button onclick="closeQsModal()" style="flex:1;padding:11px;font-size:13px;border-radius:8px;background:var(--surface2);border:1px solid var(--border);color:var(--text2);cursor:pointer;font-family:inherit;">Cancel</button>
+        </div>
+        <div id="qs-result" style="margin-top:10px;font-size:12px;min-height:16px;"></div>
+      </div>
+    </div>
+
+    <!-- SUBSCRIBER TABLE -->
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;margin-bottom:24px;">
+      <div style="padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+        <div style="font-size:14px;font-weight:700;color:var(--text);">🔔 Subscriber Status — All Users</div>
+        <button onclick="renderNotifications()" style="background:transparent;border:1px solid var(--border);color:var(--text2);padding:6px 14px;border-radius:6px;font-size:12px;cursor:pointer;font-family:inherit;">↻ Refresh</button>
+      </div>
+      <div style="overflow-x:auto;">
+        <table style="width:100%;border-collapse:collapse;min-width:600px;">
+          <thead>
+            <tr style="background:var(--surface2);">
+              <th style="padding:10px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:1px;">Name</th>
+              <th style="padding:10px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:1px;">Email</th>
+              <th style="padding:10px 12px;text-align:center;font-size:11px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:1px;">Notifs</th>
+              <th style="padding:10px 12px;text-align:center;font-size:11px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:1px;">Devices</th>
+              <th style="padding:10px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:1px;">Type</th>
+              <th style="padding:10px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:1px;">Last Seen</th>
+              <th style="padding:10px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:1px;">Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${subscriberRows || '<tr><td colspan="7" style="padding:24px;text-align:center;color:var(--text2);font-size:13px;">No users yet.</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
     <!-- INFO BOX -->
     <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px 24px;">
-      <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:10px;">ℹ️ How Push Notifications Work</div>
-      <div style="font-size:13px;color:var(--text2);line-height:1.8;">
-        Push notifications are delivered by the <strong>send-push</strong> Supabase Edge Function to every device where a user has enabled notifications.<br>
-        Users must have opened MindSpace, clicked <em>"Enable Notifications"</em>, and granted browser permission — then their device is registered automatically.<br>
-        <strong>Setup required:</strong> Deploy the Edge Function with <code style="background:var(--surface2);padding:2px 6px;border-radius:4px;">npx supabase functions deploy send-push</code> and set VAPID secrets as described in the code comments.
+      <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:10px;">ℹ️ Setup Checklist</div>
+      <div style="font-size:13px;color:var(--text2);line-height:2;">
+        <div>1️⃣ Run <code style="background:var(--surface2);padding:2px 8px;border-radius:4px;">push_subscriptions.sql</code> in your Supabase SQL Editor to create the subscriptions table.</div>
+        <div>2️⃣ Generate VAPID keys: <code style="background:var(--surface2);padding:2px 8px;border-radius:4px;">npx web-push generate-vapid-keys</code></div>
+        <div>3️⃣ Set secrets in Supabase Dashboard → Edge Functions → Secrets: <code style="background:var(--surface2);padding:2px 8px;border-radius:4px;">VAPID_PUBLIC_KEY</code>, <code style="background:var(--surface2);padding:2px 8px;border-radius:4px;">VAPID_PRIVATE_KEY</code>, <code style="background:var(--surface2);padding:2px 8px;border-radius:4px;">VAPID_SUBJECT</code></div>
+        <div>4️⃣ Deploy the Edge Function: <code style="background:var(--surface2);padding:2px 8px;border-radius:4px;">npx supabase functions deploy send-push</code></div>
+        <div>5️⃣ Users click <strong>"Enable Notifications"</strong> in chat — their device is automatically recorded in the table above.</div>
       </div>
     </div>
   `;
 }
 
-// ── Shared helper: POST directly to the Edge Function ──
-// Supabase's gateway requires an Authorization header — we use the anon key.
-// The Edge Function itself does NO role check; it just sends the push.
+// ── Quick Send Modal (from subscriber table row) ──
+let _qsUserId = null;
+
+function quickSendToUser(userId, name) {
+  _qsUserId = userId;
+  document.getElementById('qs-user-label').textContent = `To: ${name}`;
+  document.getElementById('qs-body').value = '';
+  document.getElementById('qs-result').textContent = '';
+  const modal = document.getElementById('qs-modal');
+  modal.style.display = 'flex';
+  setTimeout(() => document.getElementById('qs-body').focus(), 50);
+}
+
+function closeQsModal() {
+  document.getElementById('qs-modal').style.display = 'none';
+  _qsUserId = null;
+}
+
+async function sendQuickNotif() {
+  if (!_qsUserId) return;
+  const title  = document.getElementById('qs-title')?.value?.trim() || 'MindSpace';
+  const body   = document.getElementById('qs-body')?.value?.trim();
+  const resEl  = document.getElementById('qs-result');
+  if (!body) { resEl.style.color='var(--danger)'; resEl.textContent='⚠ Please enter a message.'; return; }
+  resEl.style.color='var(--text2)'; resEl.textContent='Sending…';
+  try {
+    const r = await callPushFunction({ targetUserId: _qsUserId, notification: { title, body, url: '/chat.html', type: 'message' } });
+    resEl.style.color = '#43e97b';
+    resEl.textContent = `✓ Sent to ${r.sent ?? 0} device(s).`;
+    toast('Notification sent!', 'success');
+    setTimeout(closeQsModal, 1500);
+  } catch(e) {
+    resEl.style.color = 'var(--danger)';
+    resEl.textContent = '✗ ' + e.message;
+  }
+}
+
+// ── Shared helper: POST to the Edge Function ──
 async function callPushFunction(payload) {
+  // Use the authenticated session token so the Edge Function can verify caller
+  let token = SUPABASE_ANON_KEY;
+  try {
+    const { data: { session } } = await sbAdmin.auth.getSession();
+    if (session?.access_token) token = session.access_token;
+  } catch(_) {}
+
   const res = await fetch(`${SUPABASE_URL}/functions/v1/send-push`, {
     method: 'POST',
     headers: {
       'Content-Type':  'application/json',
       'apikey':        SUPABASE_ANON_KEY,
-      'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+      'Authorization': `Bearer ${token}`
     },
     body: JSON.stringify(payload)
   });
