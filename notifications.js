@@ -1,22 +1,14 @@
 // ============================================================
-// notifications.js — MindSpace Push Notification Engine v4
+// notifications.js — MindSpace Push Notification Engine v5
 // ============================================================
-// Flow:
-//   1. Page loads → auto-init polls for window.currentUser
-//   2. Once user is known, SW subscription is checked
-//   3. User clicks "Enable" → requestNotificationPermission()
-//      → browser asks permission → if granted → subscribe to push
-//      → save subscription (endpoint + keys) to push_subscriptions table
-//   4. Superadmin sends push via Edge Function → SW receives it
-//      → shows OS-level notification even if tab is closed
-//   5. Local realtime listener fires a notification when a
-//      new message arrives and the tab is hidden
+// Notifications are ON by default.
+// On first visit, permission is requested automatically.
+// Users can only disable notifications — not enable them (already on).
 // ============================================================
 
 (function (global) {
   'use strict';
 
-  // ── Internal state ──
   let _pushSubscription = null;
   let _userId           = null;
   let _isAdmin          = false;
@@ -38,23 +30,65 @@
       return;
     }
 
-    // Listen for SW → page messages
     navigator.serviceWorker.addEventListener('message', _handleSWMessage);
 
-    // Already granted → silently resubscribe (re-saves to DB on each login)
     if (Notification.permission === 'granted') {
-      await _subscribeToPush();
-    }
-
-    _syncAllButtons(Notification.permission === 'granted');
-
-    // Show gentle nudge bar on user chat page if not yet decided
-    if (!_isAdmin && Notification.permission === 'default') {
-      _showNudgeBar();
+      // Already granted — silently resubscribe on each login so _pushSubscription
+      // is always populated (prevents toggle glitch on reload).
+      const sub = await _subscribeToPush();
+      _syncAllButtons(true);
+    } else if (Notification.permission === 'default' && !_isAdmin) {
+      // Not yet asked — request automatically (notifications are on by default)
+      _syncAllButtons(false);
+      await _autoRequestPermission();
+    } else {
+      // 'denied' or admin
+      _syncAllButtons(Notification.permission === 'granted');
     }
   }
 
-  // ── Request permission + subscribe ──
+  // ── Detect iOS PWA (requires user gesture for Notification.requestPermission) ──
+  function _isIosPwa() {
+    return /iphone|ipad|ipod/i.test(navigator.userAgent) &&
+      (window.navigator.standalone === true ||
+       window.matchMedia('(display-mode: standalone)').matches);
+  }
+
+  // ── Auto-request on first load (no nudge bar needed — just ask) ──
+  async function _autoRequestPermission() {
+    // iOS PWA: Notification.requestPermission() MUST be called from a direct user
+    // gesture — a setTimeout callback does not qualify. Skip auto-request and let
+    // the button handler call requestNotificationPermission() instead.
+    if (_isIosPwa()) {
+      _syncAllButtons(false);
+      _showToast('Tap "Enable Notifications" below to get alerts from your counsellor.', 'info', 6000);
+      return;
+    }
+
+    // Small delay so the page has settled before the browser prompt appears
+    await new Promise(r => setTimeout(r, 1500));
+
+    if (Notification.permission !== 'default') return;
+
+    const permission = await Notification.requestPermission();
+    if (permission === 'granted') {
+      await _subscribeToPush();
+      _syncAllButtons(true);
+      _showToast('✓ Notifications enabled — you\'ll be alerted when your counsellor replies.', 'success');
+    } else {
+      _syncAllButtons(false);
+      if (permission === 'denied') {
+        _showToast('Notifications are blocked. To re-enable, tap the 🔒 icon in your address bar → Notifications → Allow.', 'warning', 8000);
+      }
+    }
+  }
+
+  // ── Manual disable (called by the UI button) ──
+  async function disableNotifications() {
+    await unsubscribeFromPush();
+  }
+
+  // ── Re-enable (called if user wants them back) ──
   async function requestNotificationPermission() {
     if (!('Notification' in window)) {
       _showToast('Notifications are not supported on this browser.', 'error');
@@ -68,38 +102,29 @@
       return false;
     }
 
-    // Grab userId from window.currentUser immediately if available
-    if (!_userId && global.currentUser?.id) {
-      _userId = global.currentUser.id;
-    }
-
-    // Trigger init if it hasn't run yet
-    if (!_initDone && _userId) {
-      await initNotifications(_userId, _isAdmin);
-    }
-
-    // Poll briefly if still no userId
-    if (!_userId) {
-      await _waitForUserId(4000);
-    }
-
+    if (!_userId && global.currentUser?.id) _userId = global.currentUser.id;
+    if (!_initDone && _userId) await initNotifications(_userId, _isAdmin);
+    if (!_userId) await _waitForUserId(4000);
     if (!_userId) {
       _showToast('Still loading your session — please try again in a moment.', 'warning');
       return false;
     }
 
-    const permission = await Notification.requestPermission();
+    if (Notification.permission === 'granted') {
+      // Already granted — just resubscribe and confirm
+      const saved = await _subscribeToPush();
+      _syncAllButtons(true);
+      _showToast('✓ Notifications are already enabled.', 'success');
+      return true;
+    }
 
+    const permission = await Notification.requestPermission();
     if (permission === 'granted') {
       const saved = await _subscribeToPush();
-      if (saved) {
-        _showToast('✓ Notifications enabled — you\'ll be alerted when your counsellor replies!', 'success');
-      } else {
-        // Still mark UI as enabled — local notifications work even without server push
-        _showToast('✓ Notifications enabled! (Server push will activate once set up.)', 'success');
-      }
+      _showToast(saved
+        ? '✓ Notifications enabled — you\'ll be alerted when your counsellor replies!'
+        : '✓ Notifications enabled! (Server push will activate once set up.)', 'success');
       _syncAllButtons(true);
-      _dismissNudge();
       return true;
     } else {
       _showToast('Notifications were not enabled. You can enable them any time from the menu.', 'warning');
@@ -108,7 +133,7 @@
     }
   }
 
-  // ── Unsubscribe ──
+  // ── Unsubscribe / disable ──
   async function unsubscribeFromPush() {
     try {
       const reg = await navigator.serviceWorker.ready;
@@ -125,31 +150,30 @@
         _pushSubscription = null;
       }
       _syncAllButtons(false);
-      _showToast('Notifications turned off.', 'info');
+      _showToast('Notifications turned off. You can re-enable them from the menu anytime.', 'info');
     } catch (err) {
       console.error('[Notif] Unsubscribe error:', err);
     }
   }
 
   // ── Subscribe to push and save to Supabase ──
-  // Returns true if subscription was saved to DB, false otherwise
   async function _subscribeToPush() {
     try {
-      // Ensure SW is registered first — register it if missing
-      if (!navigator.serviceWorker.controller) {
-        try {
-          await navigator.serviceWorker.register('/sw.js');
-          // Wait briefly for the new SW to take control
-          await new Promise(resolve => setTimeout(resolve, 500));
-        } catch (regErr) {
-          console.warn('[Notif] SW registration error (non-fatal):', regErr);
-        }
+      // Register SW if not yet done (covers first-load and hard-reload on mobile).
+      // Do NOT gate on `.controller` — it is null on first install even after
+      // a successful registration, so we always attempt registration (idempotent).
+      try {
+        await navigator.serviceWorker.register('/sw.js');
+      } catch (regErr) {
+        console.warn('[Notif] SW registration error (non-fatal):', regErr);
       }
 
-      // Wait for SW ready with a timeout so we don't hang forever
+      // `navigator.serviceWorker.ready` resolves only when an active SW exists.
+      // Give it up to 15 s (mobile networks can be slow); if it times out we
+      // fall back gracefully — local notifications will still work.
       const reg = await Promise.race([
         navigator.serviceWorker.ready,
-        new Promise((_, reject) => setTimeout(() => reject(new Error('SW ready timeout')), 8000))
+        new Promise((_, reject) => setTimeout(() => reject(new Error('SW ready timeout')), 15000))
       ]);
 
       let sub = await reg.pushManager.getSubscription();
@@ -177,22 +201,20 @@
     }
   }
 
-  // ── Save subscription to Supabase push_subscriptions table ──
-  // Returns true on success, false on failure
+  // ── Save subscription to Supabase ──
   async function _saveSubscription(sub) {
     if (!_userId) {
-      console.warn('[Notif] Cannot save subscription — userId not set. Make sure initNotifications() was called first.');
+      console.warn('[Notif] Cannot save subscription — userId not set.');
       return false;
     }
     if (!global.sb) {
-      console.warn('[Notif] Cannot save subscription — Supabase client (sb) not ready.');
+      console.warn('[Notif] Cannot save subscription — Supabase client not ready.');
       return false;
     }
 
-    // Verify we have an active auth session — without it, RLS will block the insert
     const { data: { session } } = await global.sb.auth.getSession();
     if (!session) {
-      console.error('[Notif] ✗ No auth session found — user must be logged in to save subscription. The insert will be blocked by RLS.');
+      console.error('[Notif] ✗ No auth session — insert will be blocked by RLS.');
       return false;
     }
 
@@ -206,60 +228,29 @@
       updated_at: new Date().toISOString()
     };
 
-    console.log('[Notif] Saving subscription for user', _userId, '| session uid:', session.user.id);
+    await global.sb.from('push_subscriptions').delete()
+      .eq('user_id', _userId).eq('endpoint', json.endpoint);
 
-    // Step 1: Delete any stale record for this user+endpoint
-    await global.sb
-      .from('push_subscriptions')
-      .delete()
-      .eq('user_id', _userId)
-      .eq('endpoint', json.endpoint);
-
-    // Step 2: Fresh insert
     const { data: inserted, error: insertErr } = await global.sb
-      .from('push_subscriptions')
-      .insert(record)
-      .select();
+      .from('push_subscriptions').insert(record).select();
 
     if (!insertErr) {
       console.log('[Notif] ✓ Subscription saved to DB:', inserted);
       return true;
     }
 
-    console.error('[Notif] ✗ Insert failed — code:', insertErr.code, '| message:', insertErr.message, '| details:', insertErr.details, '| hint:', insertErr.hint);
-
-    // Step 3: Unique constraint conflict → try upsert
     if (insertErr.code === '23505') {
-      console.warn('[Notif] Retrying with upsert (unique conflict)…');
-      const { data: upserted, error: upsertErr } = await global.sb
+      const { error: upsertErr } = await global.sb
         .from('push_subscriptions')
-        .upsert(record, { onConflict: 'endpoint' })
-        .select();
-      if (!upsertErr) {
-        console.log('[Notif] ✓ Subscription upserted:', upserted);
-        return true;
-      }
-      console.error('[Notif] ✗ Upsert also failed:', upsertErr.message);
-      return false;
+        .upsert(record, { onConflict: 'endpoint' }).select();
+      if (!upsertErr) return true;
     }
 
-    // Friendly guidance for common failure codes
-    if (insertErr.code === '42P01') {
-      console.error(
-        '[Notif] ✗ The push_subscriptions table does not exist in your Supabase project.\n' +
-        'Solution: Run push_subscriptions_fix.sql in your Supabase SQL Editor.'
-      );
-    } else if (insertErr.code === '42501' || insertErr.message?.includes('policy') || insertErr.message?.includes('permission')) {
-      console.error(
-        '[Notif] ✗ RLS is blocking the insert.\n' +
-        'Solution: Run push_subscriptions_fix.sql in your Supabase SQL Editor to create the correct policies.'
-      );
-    }
-
+    console.error('[Notif] ✗ Save failed:', insertErr.message);
     return false;
   }
 
-  // ── Send a local notification via the SW (works when tab is hidden) ──
+  // ── Send a local notification ──
   async function sendLocalNotification({ title, body, url, tag, type = 'message' }) {
     if (Notification.permission !== 'granted') return;
     try {
@@ -281,7 +272,7 @@
     }
   }
 
-  // ── Realtime listener: fires local notification when a message arrives ──
+  // ── Realtime listener ──
   function setupRealtimeNotifications(conversationId) {
     if (!global.sb || !conversationId) return;
     if (_realtimeChannel) {
@@ -297,12 +288,11 @@
         filter: 'conversation_id=eq.' + conversationId
       }, async payload => {
         const msg = payload.new;
-        if (msg.sender_id === _userId) return;     // own message
-        if (!document.hidden)          return;     // tab is visible — no pop needed
+        if (msg.sender_id === _userId) return;
+        if (!document.hidden) return;
 
         const preview = (msg.content || '').substring(0, 100) +
           (msg.content?.length > 100 ? '…' : '');
-
         const body = preview ||
           (msg.message_type === 'voice' ? '🎙 Voice message' :
            msg.message_type === 'image' ? '📷 Image' :
@@ -321,33 +311,21 @@
     return _realtimeChannel;
   }
 
-  // ── Admin helpers (used by admin.html / superadmin.html) ──
+  // ── Admin helpers ──
   async function adminSendPushToUser(targetUserId, { title, body, url, type = 'message' }) {
-    return _callEdgeFunction({
-      targetUserId,
-      notification: { title, body, url: url || '/chat.html', type }
-    });
+    return _callEdgeFunction({ targetUserId, notification: { title, body, url: url || '/chat.html', type } });
   }
-
   async function adminBroadcastPush({ title, body, url, type = 'announcement' }) {
-    return _callEdgeFunction({
-      broadcast: true,
-      notification: { title, body, url: url || '/chat.html', type }
-    });
+    return _callEdgeFunction({ broadcast: true, notification: { title, body, url: url || '/chat.html', type } });
   }
 
-  // ── Call the send-push Edge Function ──
   async function _callEdgeFunction(payload) {
     if (!global.sb) return { success: false, error: 'Supabase not ready' };
-    if (typeof global.SUPABASE_URL === 'undefined' || typeof global.SUPABASE_ANON_KEY === 'undefined') {
-      return { success: false, error: 'SUPABASE_URL / SUPABASE_ANON_KEY not defined' };
-    }
     try {
       const { data: { session } } = await global.sb.auth.getSession();
       const token = session?.access_token || global.SUPABASE_ANON_KEY;
-
       const res = await fetch(`${global.SUPABASE_URL}/functions/v1/send-push`, {
-        method:  'POST',
+        method: 'POST',
         headers: {
           'Content-Type':  'application/json',
           'apikey':        global.SUPABASE_ANON_KEY,
@@ -355,10 +333,8 @@
         },
         body: JSON.stringify(payload)
       });
-
       let json = {};
       try { json = await res.json(); } catch (_) {}
-
       if (!res.ok) throw new Error(json.error || json.message || `HTTP ${res.status}`);
       return { success: true, data: json };
     } catch (err) {
@@ -367,156 +343,40 @@
     }
   }
 
-  // ── Nudge bar ──
-  function _showNudgeBar() {
-    if (sessionStorage.getItem('ms_notif_nudge_dismissed')) return;
-    if (document.getElementById('ms-notif-nudge')) return;
-
-    setTimeout(() => {
-      const bar = document.createElement('div');
-      bar.id = 'ms-notif-nudge';
-
-      bar.style.cssText = [
-        'position:fixed',
-        'bottom:36px',
-        'left:50%',
-        'transform:translateX(-50%) translateY(120px)',
-        'z-index:999999',
-        'background:#fff',
-        'border:1.5px solid #E0DDD8',
-        'border-top:3px solid #1900ff',
-        'box-shadow:0 8px 32px rgba(0,0,0,.18)',
-        'padding:14px 16px',
-        'display:flex',
-        'align-items:center',
-        'gap:12px',
-        'width:min(440px,calc(100vw - 32px))',
-        'box-sizing:border-box',
-        'font-family:DM Sans,sans-serif',
-        'font-size:13px',
-        'transition:transform .5s cubic-bezier(.16,1,.3,1),opacity .4s',
-        'opacity:0',
-        'pointer-events:all'
-      ].join(';');
-
-      const bell = document.createElement('span');
-      bell.style.cssText = 'font-size:22px;flex-shrink:0';
-      bell.textContent = '🔔';
-
-      const textWrap = document.createElement('div');
-      textWrap.style.cssText = 'flex:1;min-width:0';
-
-      const titleEl = document.createElement('div');
-      titleEl.style.cssText = 'font-weight:600;color:#0a0a0a;font-size:13px;margin-bottom:2px';
-      titleEl.textContent = 'Get session alerts';
-
-      const subEl = document.createElement('div');
-      subEl.style.cssText = 'font-size:11px;color:#888;font-weight:300;line-height:1.5';
-      subEl.textContent = 'Enable notifications so your counsellor can reach you even when this tab is in the background.';
-
-      textWrap.appendChild(titleEl);
-      textWrap.appendChild(subEl);
-
-      const btnCol = document.createElement('div');
-      btnCol.style.cssText = 'display:flex;flex-direction:column;gap:6px;flex-shrink:0';
-
-      const enableBtn = document.createElement('button');
-      enableBtn.style.cssText = [
-        'background:#1900ff', 'color:#fff', 'border:none',
-        'padding:10px 18px', 'font-size:12px', 'font-weight:700',
-        'letter-spacing:1px', 'text-transform:uppercase',
-        'cursor:pointer', 'font-family:inherit',
-        'white-space:nowrap', 'min-height:40px',
-        'pointer-events:all', '-webkit-tap-highlight-color:transparent'
-      ].join(';');
-      enableBtn.textContent = 'Enable';
-
-      const dismissBtn = document.createElement('button');
-      dismissBtn.style.cssText = [
-        'background:transparent', 'color:#aaa', 'border:none',
-        'padding:4px 6px', 'font-size:11px',
-        'cursor:pointer', 'font-family:inherit',
-        'pointer-events:all', '-webkit-tap-highlight-color:transparent'
-      ].join(';');
-      dismissBtn.textContent = 'Not now';
-
-      btnCol.appendChild(enableBtn);
-      btnCol.appendChild(dismissBtn);
-
-      bar.appendChild(bell);
-      bar.appendChild(textWrap);
-      bar.appendChild(btnCol);
-
-      document.body.appendChild(bar);
-
-      requestAnimationFrame(() => requestAnimationFrame(() => {
-        bar.style.transform = 'translateX(-50%) translateY(0)';
-        bar.style.opacity   = '1';
-      }));
-
-      enableBtn.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        _dismissNudge();
-        await requestNotificationPermission();
-      });
-
-      dismissBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        _dismissNudge();
-        sessionStorage.setItem('ms_notif_nudge_dismissed', '1');
-      });
-
-      enableBtn.addEventListener('touchend', async (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        _dismissNudge();
-        await requestNotificationPermission();
-      }, { passive: false });
-
-      dismissBtn.addEventListener('touchend', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        _dismissNudge();
-        sessionStorage.setItem('ms_notif_nudge_dismissed', '1');
-      }, { passive: false });
-
-    }, 4000);
-  }
-
-  function _dismissNudge() {
-    const bar = document.getElementById('ms-notif-nudge');
-    if (!bar) return;
-    bar.style.transform = 'translateX(-50%) translateY(120px)';
-    bar.style.opacity   = '0';
-    setTimeout(() => bar.remove(), 500);
-  }
-
-  // ── Sync every notification button/status element on the page ──
+  // ── Sync all notification buttons/status elements ──
+  // enabled = true  → show "Disable Notifications" option
+  // enabled = false → show "Enable Notifications" option (as fallback)
   function _syncAllButtons(enabled) {
     const topBtn = document.getElementById('notif-toggle-btn');
     if (topBtn) {
-      topBtn.textContent = enabled ? '🔔 Notifications On' : '🔕 Notifications';
+      topBtn.textContent = enabled ? '🔔 Notifications On' : '🔕 Notifications Off';
       topBtn.style.color = enabled ? 'var(--sage,#1900ff)' : '';
     }
+
     const sideBtn = document.getElementById('notif-sidebar-btn');
     const sideSt  = document.getElementById('notif-sidebar-status');
     if (sideBtn) {
-      sideBtn.textContent       = enabled ? '🔔 Notifications On' : '🔕 Enable Notifications';
+      sideBtn.textContent       = enabled ? '🔔 Disable Notifications' : '🔕 Enable Notifications';
       sideBtn.style.borderColor = enabled ? 'var(--sage,#1900ff)' : '';
       sideBtn.style.color       = enabled ? 'var(--sage,#1900ff)' : '';
     }
     if (sideSt) {
-      sideSt.textContent = enabled ? '✓ You will receive alerts for new messages.' : '';
-      sideSt.style.color = 'var(--sage,#1900ff)';
+      sideSt.textContent = enabled
+        ? '✓ You will receive alerts for new messages.'
+        : 'Notifications are off. Tap above to re-enable.';
+      sideSt.style.color = enabled ? 'var(--sage,#1900ff)' : '#aaa';
     }
+
     const drawerBtn = document.getElementById('drawer-notif-btn');
     const drawerSt  = document.getElementById('drawer-notif-status');
     if (drawerBtn) {
-      drawerBtn.textContent = enabled ? '🔔 Notifications On' : '🔕 Enable Notifications';
+      drawerBtn.textContent = enabled ? '🔔 Disable Notifications' : '🔕 Enable Notifications';
       drawerBtn.classList.toggle('enabled', enabled);
     }
     if (drawerSt) {
-      drawerSt.textContent = enabled ? '✓ You\'ll be alerted when your counsellor replies.' : '';
+      drawerSt.textContent = enabled
+        ? '✓ You\'ll be alerted when your counsellor replies.'
+        : 'Notifications are off. Tap above to re-enable.';
     }
 
     if (typeof global.syncNotifUI === 'function') global.syncNotifUI(enabled);
@@ -539,30 +399,39 @@
     }
   }
 
-  // ── Wait until window.currentUser is set (up to maxMs) ──
+  // ── Wire up notification buttons to disable/enable correctly ──
+  function _bindButtons() {
+    // Any element with data-notif-toggle will toggle on/off
+    document.querySelectorAll('[data-notif-toggle]').forEach(el => {
+      el.addEventListener('click', async () => {
+        if (Notification.permission === 'granted' && _pushSubscription) {
+          await disableNotifications();
+        } else {
+          await requestNotificationPermission();
+        }
+      });
+    });
+
+    // Explicit disable buttons
+    document.querySelectorAll('[data-notif-disable]').forEach(el => {
+      el.addEventListener('click', () => disableNotifications());
+    });
+  }
+
   function _waitForUserId(maxMs) {
     return new Promise(resolve => {
       if (_userId) return resolve();
-
       const directId = global.currentUser?.id;
       if (directId) { _userId = directId; return resolve(); }
-
       const start = Date.now();
       const t = setInterval(() => {
         const id = _userId || global.currentUser?.id;
-        if (id) {
-          if (!_userId) _userId = id;
-          clearInterval(t);
-          resolve();
-        } else if (Date.now() - start > maxMs) {
-          clearInterval(t);
-          resolve();
-        }
+        if (id) { if (!_userId) _userId = id; clearInterval(t); resolve(); }
+        else if (Date.now() - start > maxMs) { clearInterval(t); resolve(); }
       }, 80);
     });
   }
 
-  // ── Toast ──
   function _showToast(msg, variant = 'info', duration = 4500) {
     if (typeof global.showToast === 'function') { global.showToast(msg); return; }
     let el = document.getElementById('ms-notif-toast');
@@ -592,7 +461,6 @@
     }, duration);
   }
 
-  // ── Utility: VAPID key conversion ──
   function _urlBase64ToUint8Array(base64String) {
     const padding = '='.repeat((4 - base64String.length % 4) % 4);
     const base64  = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
@@ -600,7 +468,7 @@
     return Uint8Array.from([...rawData].map(c => c.charCodeAt(0)));
   }
 
-  // ── Auto-init on user chat page ──
+  // ── Auto-init on chat page ──
   function _autoInit() {
     if (window.location.pathname.includes('admin')) return;
 
@@ -616,6 +484,7 @@
         clearInterval(poll);
         _userId = userId;
         await initNotifications(userId, false);
+        _bindButtons();
         if (convId) setupRealtimeNotifications(convId);
         return;
       }
@@ -637,6 +506,7 @@
   global.MSNotif = {
     init:               initNotifications,
     requestPermission:  requestNotificationPermission,
+    disable:            disableNotifications,
     unsubscribe:        unsubscribeFromPush,
     sendLocal:          sendLocalNotification,
     setupRealtime:      setupRealtimeNotifications,
@@ -649,6 +519,7 @@
 
   // Backward-compat globals
   global.requestNotificationPermission = requestNotificationPermission;
+  global.disableNotifications          = disableNotifications;
   global.sendLocalNotification         = sendLocalNotification;
 
 })(window);
