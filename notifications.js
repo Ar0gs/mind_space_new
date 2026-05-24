@@ -1,15 +1,15 @@
 // ============================================================
-// notifications.js — MindSpace Push Notification Engine v3
+// notifications.js — MindSpace Push Notification Engine v4
 // ============================================================
 // Flow:
 //   1. Page loads → auto-init polls for window.currentUser
-//   2. Once user is known, _userId is set and SW subscription checked
+//   2. Once user is known, SW subscription is checked
 //   3. User clicks "Enable" → requestNotificationPermission()
 //      → browser asks permission → if granted → subscribe to push
 //      → save subscription (endpoint + keys) to push_subscriptions table
 //   4. Superadmin sends push via Edge Function → SW receives it
 //      → shows OS-level notification even if tab is closed
-//   5. Local realtime listener also fires a notification when a
+//   5. Local realtime listener fires a notification when a
 //      new message arrives and the tab is hidden
 // ============================================================
 
@@ -25,8 +25,8 @@
 
   // ── Public init ──
   async function initNotifications(userId, isAdmin) {
-    _userId  = userId;
-    _isAdmin = !!isAdmin;
+    _userId   = userId;
+    _isAdmin  = !!isAdmin;
     _initDone = true;
 
     if (!('Notification' in window)) {
@@ -55,7 +55,6 @@
   }
 
   // ── Request permission + subscribe ──
-  // This is what the Enable button calls.
   async function requestNotificationPermission() {
     if (!('Notification' in window)) {
       _showToast('Notifications are not supported on this browser.', 'error');
@@ -69,20 +68,17 @@
       return false;
     }
 
-    // FIX Bug 1+2: grab userId immediately from window.currentUser before
-    // falling back to the poll. chat.html sets window.currentUser = session.user
-    // in init() — this ensures we never show the "please wait" message when
-    // the user is already logged in and init() has completed.
+    // Grab userId from window.currentUser immediately if available
     if (!_userId && global.currentUser?.id) {
       _userId = global.currentUser.id;
     }
 
-    // Also trigger MSNotif.init if it hasn't run yet (e.g. fast click on load)
+    // Trigger init if it hasn't run yet
     if (!_initDone && _userId) {
       await initNotifications(_userId, _isAdmin);
     }
 
-    // If still no userId after all that, poll briefly
+    // Poll briefly if still no userId
     if (!_userId) {
       await _waitForUserId(4000);
     }
@@ -95,8 +91,13 @@
     const permission = await Notification.requestPermission();
 
     if (permission === 'granted') {
-      await _subscribeToPush();
-      _showToast('✓ Notifications enabled — you\'ll be alerted when your counsellor replies!', 'success');
+      const saved = await _subscribeToPush();
+      if (saved) {
+        _showToast('✓ Notifications enabled — you\'ll be alerted when your counsellor replies!', 'success');
+      } else {
+        // Still mark UI as enabled — local notifications work even without server push
+        _showToast('✓ Notifications enabled! (Server push will activate once set up.)', 'success');
+      }
       _syncAllButtons(true);
       _dismissNudge();
       return true;
@@ -131,33 +132,69 @@
   }
 
   // ── Subscribe to push and save to Supabase ──
+  // Returns true if subscription was saved to DB, false otherwise
   async function _subscribeToPush() {
     try {
-      const reg = await navigator.serviceWorker.ready;
+      // Ensure SW is registered first — register it if missing
+      if (!navigator.serviceWorker.controller) {
+        try {
+          await navigator.serviceWorker.register('/sw.js');
+          // Wait briefly for the new SW to take control
+          await new Promise(resolve => setTimeout(resolve, 500));
+        } catch (regErr) {
+          console.warn('[Notif] SW registration error (non-fatal):', regErr);
+        }
+      }
+
+      // Wait for SW ready with a timeout so we don't hang forever
+      const reg = await Promise.race([
+        navigator.serviceWorker.ready,
+        new Promise((_, reject) => setTimeout(() => reject(new Error('SW ready timeout')), 8000))
+      ]);
+
       let sub = await reg.pushManager.getSubscription();
 
       if (!sub) {
         const vapidKey = global.VAPID_PUBLIC_KEY;
         if (!vapidKey) {
           console.info('[Notif] No VAPID_PUBLIC_KEY — server push disabled; local notifications still work.');
-          return;
+          return false;
         }
         sub = await reg.pushManager.subscribe({
           userVisibleOnly: true,
           applicationServerKey: _urlBase64ToUint8Array(vapidKey)
         });
+        console.log('[Notif] ✓ New push subscription created:', sub.endpoint.substring(0, 60) + '…');
+      } else {
+        console.log('[Notif] ✓ Existing push subscription found.');
       }
 
       _pushSubscription = sub;
-      await _saveSubscription(sub);
+      return await _saveSubscription(sub);
     } catch (err) {
-      console.error('[Notif] Push subscription error:', err);
+      console.error('[Notif] Push subscription error:', err.message || err);
+      return false;
     }
   }
 
   // ── Save subscription to Supabase push_subscriptions table ──
+  // Returns true on success, false on failure
   async function _saveSubscription(sub) {
-    if (!_userId || !global.sb) return;
+    if (!_userId) {
+      console.warn('[Notif] Cannot save subscription — userId not set. Make sure initNotifications() was called first.');
+      return false;
+    }
+    if (!global.sb) {
+      console.warn('[Notif] Cannot save subscription — Supabase client (sb) not ready.');
+      return false;
+    }
+
+    // Verify we have an active auth session — without it, RLS will block the insert
+    const { data: { session } } = await global.sb.auth.getSession();
+    if (!session) {
+      console.error('[Notif] ✗ No auth session found — user must be logged in to save subscription. The insert will be blocked by RLS.');
+      return false;
+    }
 
     const json   = sub.toJSON();
     const record = {
@@ -169,28 +206,57 @@
       updated_at: new Date().toISOString()
     };
 
-    // Try upsert with onConflict on 'endpoint' alone first (most DB schemas)
-    // Fall back to plain insert/update if that fails
-    let { error } = await global.sb
+    console.log('[Notif] Saving subscription for user', _userId, '| session uid:', session.user.id);
+
+    // Step 1: Delete any stale record for this user+endpoint
+    await global.sb
       .from('push_subscriptions')
-      .upsert(record, { onConflict: 'endpoint' });
+      .delete()
+      .eq('user_id', _userId)
+      .eq('endpoint', json.endpoint);
 
-    if (error) {
-      // Fallback: try delete + insert
-      await global.sb.from('push_subscriptions')
-        .delete()
-        .eq('user_id', _userId)
-        .eq('endpoint', json.endpoint);
+    // Step 2: Fresh insert
+    const { data: inserted, error: insertErr } = await global.sb
+      .from('push_subscriptions')
+      .insert(record)
+      .select();
 
-      const res2 = await global.sb.from('push_subscriptions').insert(record);
-      error = res2.error;
+    if (!insertErr) {
+      console.log('[Notif] ✓ Subscription saved to DB:', inserted);
+      return true;
     }
 
-    if (error) {
-      console.error('[Notif] Failed to save subscription:', error);
-    } else {
-      console.log('[Notif] ✓ Subscription saved for user', _userId);
+    console.error('[Notif] ✗ Insert failed — code:', insertErr.code, '| message:', insertErr.message, '| details:', insertErr.details, '| hint:', insertErr.hint);
+
+    // Step 3: Unique constraint conflict → try upsert
+    if (insertErr.code === '23505') {
+      console.warn('[Notif] Retrying with upsert (unique conflict)…');
+      const { data: upserted, error: upsertErr } = await global.sb
+        .from('push_subscriptions')
+        .upsert(record, { onConflict: 'endpoint' })
+        .select();
+      if (!upsertErr) {
+        console.log('[Notif] ✓ Subscription upserted:', upserted);
+        return true;
+      }
+      console.error('[Notif] ✗ Upsert also failed:', upsertErr.message);
+      return false;
     }
+
+    // Friendly guidance for common failure codes
+    if (insertErr.code === '42P01') {
+      console.error(
+        '[Notif] ✗ The push_subscriptions table does not exist in your Supabase project.\n' +
+        'Solution: Run push_subscriptions_fix.sql in your Supabase SQL Editor.'
+      );
+    } else if (insertErr.code === '42501' || insertErr.message?.includes('policy') || insertErr.message?.includes('permission')) {
+      console.error(
+        '[Notif] ✗ RLS is blocking the insert.\n' +
+        'Solution: Run push_subscriptions_fix.sql in your Supabase SQL Editor to create the correct policies.'
+      );
+    }
+
+    return false;
   }
 
   // ── Send a local notification via the SW (works when tab is hidden) ──
@@ -270,19 +336,21 @@
     });
   }
 
-  // Calls the send-push Edge Function with the current user's session token
-  // so the function's role check passes.
+  // ── Call the send-push Edge Function ──
   async function _callEdgeFunction(payload) {
     if (!global.sb) return { success: false, error: 'Supabase not ready' };
+    if (typeof global.SUPABASE_URL === 'undefined' || typeof global.SUPABASE_ANON_KEY === 'undefined') {
+      return { success: false, error: 'SUPABASE_URL / SUPABASE_ANON_KEY not defined' };
+    }
     try {
       const { data: { session } } = await global.sb.auth.getSession();
-      const token = session?.access_token || SUPABASE_ANON_KEY;
+      const token = session?.access_token || global.SUPABASE_ANON_KEY;
 
-      const res = await fetch(`${SUPABASE_URL}/functions/v1/send-push`, {
+      const res = await fetch(`${global.SUPABASE_URL}/functions/v1/send-push`, {
         method:  'POST',
         headers: {
           'Content-Type':  'application/json',
-          'apikey':        SUPABASE_ANON_KEY,
+          'apikey':        global.SUPABASE_ANON_KEY,
           'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify(payload)
@@ -300,7 +368,6 @@
   }
 
   // ── Nudge bar ──
-  /*
   function _showNudgeBar() {
     if (sessionStorage.getItem('ms_notif_nudge_dismissed')) return;
     if (document.getElementById('ms-notif-nudge')) return;
@@ -308,30 +375,77 @@
     setTimeout(() => {
       const bar = document.createElement('div');
       bar.id = 'ms-notif-nudge';
+
       bar.style.cssText = [
-        'position:fixed', 'bottom:40px', 'left:50%',
-        'transform:translateX(-50%) translateY(100px)',
-        'z-index:99998', 'background:#fff',
-        'border:1.5px solid #E0DDD8', 'border-top:3px solid #1900ff',
-        'box-shadow:0 8px 32px rgba(0,0,0,.14)',
-        'padding:14px 18px', 'display:flex', 'align-items:center', 'gap:12px',
-        'max-width:min(420px,calc(100vw - 32px))', 'width:max-content',
-        'font-family:DM Sans,sans-serif', 'font-size:13px',
+        'position:fixed',
+        'bottom:36px',
+        'left:50%',
+        'transform:translateX(-50%) translateY(120px)',
+        'z-index:999999',
+        'background:#fff',
+        'border:1.5px solid #E0DDD8',
+        'border-top:3px solid #1900ff',
+        'box-shadow:0 8px 32px rgba(0,0,0,.18)',
+        'padding:14px 16px',
+        'display:flex',
+        'align-items:center',
+        'gap:12px',
+        'width:min(440px,calc(100vw - 32px))',
+        'box-sizing:border-box',
+        'font-family:DM Sans,sans-serif',
+        'font-size:13px',
         'transition:transform .5s cubic-bezier(.16,1,.3,1),opacity .4s',
-        'opacity:0'
+        'opacity:0',
+        'pointer-events:all'
       ].join(';');
 
-      bar.innerHTML = `
-        <span style="font-size:22px;flex-shrink:0">🔔</span>
-        <div style="flex:1;min-width:0">
-          <div style="font-weight:600;color:#0a0a0a;font-size:13px;margin-bottom:2px">Get session alerts</div>
-          <div style="font-size:11px;color:#888;font-weight:300;line-height:1.5">Enable notifications so your counsellor can reach you even when this tab is in the background.</div>
-        </div>
-        <div style="display:flex;flex-direction:column;gap:5px;flex-shrink:0">
-          <button id="ms-notif-enable-btn" style="background:#1900ff;color:#fff;border:none;padding:8px 16px;font-size:12px;font-weight:700;letter-spacing:1px;text-transform:uppercase;cursor:pointer;font-family:inherit;white-space:nowrap;min-height:36px;">Enable</button>
-          <button id="ms-notif-dismiss-btn" style="background:transparent;color:#aaa;border:none;padding:2px 6px;font-size:11px;cursor:pointer;font-family:inherit">Not now</button>
-        </div>
-      `;
+      const bell = document.createElement('span');
+      bell.style.cssText = 'font-size:22px;flex-shrink:0';
+      bell.textContent = '🔔';
+
+      const textWrap = document.createElement('div');
+      textWrap.style.cssText = 'flex:1;min-width:0';
+
+      const titleEl = document.createElement('div');
+      titleEl.style.cssText = 'font-weight:600;color:#0a0a0a;font-size:13px;margin-bottom:2px';
+      titleEl.textContent = 'Get session alerts';
+
+      const subEl = document.createElement('div');
+      subEl.style.cssText = 'font-size:11px;color:#888;font-weight:300;line-height:1.5';
+      subEl.textContent = 'Enable notifications so your counsellor can reach you even when this tab is in the background.';
+
+      textWrap.appendChild(titleEl);
+      textWrap.appendChild(subEl);
+
+      const btnCol = document.createElement('div');
+      btnCol.style.cssText = 'display:flex;flex-direction:column;gap:6px;flex-shrink:0';
+
+      const enableBtn = document.createElement('button');
+      enableBtn.style.cssText = [
+        'background:#1900ff', 'color:#fff', 'border:none',
+        'padding:10px 18px', 'font-size:12px', 'font-weight:700',
+        'letter-spacing:1px', 'text-transform:uppercase',
+        'cursor:pointer', 'font-family:inherit',
+        'white-space:nowrap', 'min-height:40px',
+        'pointer-events:all', '-webkit-tap-highlight-color:transparent'
+      ].join(';');
+      enableBtn.textContent = 'Enable';
+
+      const dismissBtn = document.createElement('button');
+      dismissBtn.style.cssText = [
+        'background:transparent', 'color:#aaa', 'border:none',
+        'padding:4px 6px', 'font-size:11px',
+        'cursor:pointer', 'font-family:inherit',
+        'pointer-events:all', '-webkit-tap-highlight-color:transparent'
+      ].join(';');
+      dismissBtn.textContent = 'Not now';
+
+      btnCol.appendChild(enableBtn);
+      btnCol.appendChild(dismissBtn);
+
+      bar.appendChild(bell);
+      bar.appendChild(textWrap);
+      bar.appendChild(btnCol);
 
       document.body.appendChild(bar);
 
@@ -340,177 +454,54 @@
         bar.style.opacity   = '1';
       }));
 
-      document.getElementById('ms-notif-enable-btn').addEventListener('click', async () => {
+      enableBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
         _dismissNudge();
         await requestNotificationPermission();
       });
-      document.getElementById('ms-notif-dismiss-btn').addEventListener('click', () => {
+
+      dismissBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
         _dismissNudge();
         sessionStorage.setItem('ms_notif_nudge_dismissed', '1');
       });
+
+      enableBtn.addEventListener('touchend', async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        _dismissNudge();
+        await requestNotificationPermission();
+      }, { passive: false });
+
+      dismissBtn.addEventListener('touchend', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        _dismissNudge();
+        sessionStorage.setItem('ms_notif_nudge_dismissed', '1');
+      }, { passive: false });
+
     }, 4000);
   }
 
   function _dismissNudge() {
     const bar = document.getElementById('ms-notif-nudge');
     if (!bar) return;
-    bar.style.transform = 'translateX(-50%) translateY(100px)';
+    bar.style.transform = 'translateX(-50%) translateY(120px)';
     bar.style.opacity   = '0';
     setTimeout(() => bar.remove(), 500);
   }
-  */
 
-function _showNudgeBar() {
-  if (sessionStorage.getItem('ms_notif_nudge_dismissed')) return;
-  if (document.getElementById('ms-notif-nudge')) return;
-
-  setTimeout(() => {
-    const bar = document.createElement('div');
-    bar.id = 'ms-notif-nudge';
-
-    // FIX 1: z-index raised to 999999 — above the #rwi-ticker (z-index:99999)
-    // which was sitting on top of this bar and swallowing all click events.
-    //
-    // FIX 2: bottom raised to 36px (above the 28px ticker) + extra 8px breathing room.
-    //
-    // FIX 3: width changed from 'max-content' (overflows on mobile) to
-    // 'calc(100vw - 32px)' capped at 440px — bar now fits any screen.
-    //
-    // FIX 4: buttons are built as real DOM nodes with addEventListener (not
-    // innerHTML) so there is zero chance of an ID lookup timing issue.
-    bar.style.cssText = [
-      'position:fixed',
-      'bottom:36px',
-      'left:50%',
-      'transform:translateX(-50%) translateY(120px)',
-      'z-index:999999',
-      'background:#fff',
-      'border:1.5px solid #E0DDD8',
-      'border-top:3px solid #1900ff',
-      'box-shadow:0 8px 32px rgba(0,0,0,.18)',
-      'padding:14px 16px',
-      'display:flex',
-      'align-items:center',
-      'gap:12px',
-      'width:min(440px,calc(100vw - 32px))',
-      'box-sizing:border-box',
-      'font-family:DM Sans,sans-serif',
-      'font-size:13px',
-      'transition:transform .5s cubic-bezier(.16,1,.3,1),opacity .4s',
-      'opacity:0',
-      'pointer-events:all'
-    ].join(';');
-
-    // ── Bell + text block ──
-    const bell = document.createElement('span');
-    bell.style.cssText = 'font-size:22px;flex-shrink:0';
-    bell.textContent = '🔔';
-
-    const textWrap = document.createElement('div');
-    textWrap.style.cssText = 'flex:1;min-width:0';
-
-    const title = document.createElement('div');
-    title.style.cssText = 'font-weight:600;color:#0a0a0a;font-size:13px;margin-bottom:2px';
-    title.textContent = 'Get session alerts';
-
-    const sub = document.createElement('div');
-    sub.style.cssText = 'font-size:11px;color:#888;font-weight:300;line-height:1.5';
-    sub.textContent = 'Enable notifications so your counsellor can reach you even when this tab is in the background.';
-
-    textWrap.appendChild(title);
-    textWrap.appendChild(sub);
-
-    // ── Button column ──
-    const btnCol = document.createElement('div');
-    btnCol.style.cssText = 'display:flex;flex-direction:column;gap:6px;flex-shrink:0';
-
-    const enableBtn = document.createElement('button');
-    enableBtn.style.cssText = [
-      'background:#1900ff', 'color:#fff', 'border:none',
-      'padding:10px 18px', 'font-size:12px', 'font-weight:700',
-      'letter-spacing:1px', 'text-transform:uppercase',
-      'cursor:pointer', 'font-family:inherit',
-      'white-space:nowrap', 'min-height:40px',
-      'pointer-events:all', '-webkit-tap-highlight-color:transparent'
-    ].join(';');
-    enableBtn.textContent = 'Enable';
-
-    const dismissBtn = document.createElement('button');
-    dismissBtn.style.cssText = [
-      'background:transparent', 'color:#aaa', 'border:none',
-      'padding:4px 6px', 'font-size:11px',
-      'cursor:pointer', 'font-family:inherit',
-      'pointer-events:all', '-webkit-tap-highlight-color:transparent'
-    ].join(';');
-    dismissBtn.textContent = 'Not now';
-
-    btnCol.appendChild(enableBtn);
-    btnCol.appendChild(dismissBtn);
-
-    bar.appendChild(bell);
-    bar.appendChild(textWrap);
-    bar.appendChild(btnCol);
-
-    document.body.appendChild(bar);
-
-    // Animate in after two frames so the initial transform is painted first
-    requestAnimationFrame(() => requestAnimationFrame(() => {
-      bar.style.transform = 'translateX(-50%) translateY(0)';
-      bar.style.opacity   = '1';
-    }));
-
-    // ── Event listeners attached directly to the DOM nodes — no ID lookup ──
-    enableBtn.addEventListener('click', async (e) => {
-      e.stopPropagation();
-      _dismissNudge();
-      await requestNotificationPermission();
-    });
-
-    dismissBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      _dismissNudge();
-      sessionStorage.setItem('ms_notif_nudge_dismissed', '1');
-    });
-
-    // Touch events for mobile (belt-and-suspenders alongside click)
-    enableBtn.addEventListener('touchend', async (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      _dismissNudge();
-      await requestNotificationPermission();
-    }, { passive: false });
-
-    dismissBtn.addEventListener('touchend', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      _dismissNudge();
-      sessionStorage.setItem('ms_notif_nudge_dismissed', '1');
-    }, { passive: false });
-
-  }, 4000);
-}
-
-function _dismissNudge() {
-  const bar = document.getElementById('ms-notif-nudge');
-  if (!bar) return;
-  bar.style.transform = 'translateX(-50%) translateY(120px)';
-  bar.style.opacity   = '0';
-  setTimeout(() => bar.remove(), 500);
-}
-  
   // ── Sync every notification button/status element on the page ──
   function _syncAllButtons(enabled) {
-    // Top-bar button (desktop)
     const topBtn = document.getElementById('notif-toggle-btn');
     if (topBtn) {
       topBtn.textContent = enabled ? '🔔 Notifications On' : '🔕 Notifications';
       topBtn.style.color = enabled ? 'var(--sage,#1900ff)' : '';
     }
-    // Sidebar button
     const sideBtn = document.getElementById('notif-sidebar-btn');
     const sideSt  = document.getElementById('notif-sidebar-status');
     if (sideBtn) {
-      sideBtn.textContent    = enabled ? '🔔 Notifications On' : '🔕 Enable Notifications';
+      sideBtn.textContent       = enabled ? '🔔 Notifications On' : '🔕 Enable Notifications';
       sideBtn.style.borderColor = enabled ? 'var(--sage,#1900ff)' : '';
       sideBtn.style.color       = enabled ? 'var(--sage,#1900ff)' : '';
     }
@@ -518,7 +509,6 @@ function _dismissNudge() {
       sideSt.textContent = enabled ? '✓ You will receive alerts for new messages.' : '';
       sideSt.style.color = 'var(--sage,#1900ff)';
     }
-    // Mobile drawer button
     const drawerBtn = document.getElementById('drawer-notif-btn');
     const drawerSt  = document.getElementById('drawer-notif-status');
     if (drawerBtn) {
@@ -529,7 +519,6 @@ function _dismissNudge() {
       drawerSt.textContent = enabled ? '✓ You\'ll be alerted when your counsellor replies.' : '';
     }
 
-    // Also call chat.html's syncNotifUI if it exists (belt-and-suspenders)
     if (typeof global.syncNotifUI === 'function') global.syncNotifUI(enabled);
   }
 
@@ -551,13 +540,10 @@ function _dismissNudge() {
   }
 
   // ── Wait until window.currentUser is set (up to maxMs) ──
-  // FIX: also tries window.currentUser directly as the fastest path,
-  // since chat.html now sets window.currentUser = session.user in init().
   function _waitForUserId(maxMs) {
     return new Promise(resolve => {
       if (_userId) return resolve();
 
-      // Immediate check — chat.html may have already set window.currentUser
       const directId = global.currentUser?.id;
       if (directId) { _userId = directId; return resolve(); }
 
@@ -572,7 +558,7 @@ function _dismissNudge() {
           clearInterval(t);
           resolve();
         }
-      }, 80); // poll more frequently (80ms vs 100ms)
+      }, 80);
     });
   }
 
@@ -615,34 +601,30 @@ function _dismissNudge() {
   }
 
   // ── Auto-init on user chat page ──
-  // Polls until window.currentUser is available (set by chat.html's init()),
-  // then calls initNotifications and wires up realtime.
   function _autoInit() {
-    if (window.location.pathname.includes('admin')) return; // admin pages call init manually
+    if (window.location.pathname.includes('admin')) return;
 
     let attempts = 0;
     const poll = setInterval(async () => {
       attempts++;
-      if (attempts > 100) { clearInterval(poll); return; } // give up after ~20s
+      if (attempts > 100) { clearInterval(poll); return; }
 
-      // FIX: read from window.currentUser which chat.html now explicitly sets
       const userId = global.currentUser?.id;
       const convId = global.conversationId;
 
       if (userId && !_initDone) {
         clearInterval(poll);
-        _userId = userId; // pre-set so requestPermission never sees null
+        _userId = userId;
         await initNotifications(userId, false);
         if (convId) setupRealtimeNotifications(convId);
         return;
       }
 
-      // conversationId may arrive slightly after currentUser
       if (_initDone && convId && !_realtimeChannel) {
         clearInterval(poll);
         setupRealtimeNotifications(convId);
       }
-    }, 200); // poll at 200ms — faster than before so UI is ready sooner
+    }, 200);
   }
 
   if (document.readyState === 'loading') {
@@ -653,16 +635,16 @@ function _dismissNudge() {
 
   // ── Public API ──
   global.MSNotif = {
-    init:              initNotifications,
-    requestPermission: requestNotificationPermission,
-    unsubscribe:       unsubscribeFromPush,
-    sendLocal:         sendLocalNotification,
-    setupRealtime:     setupRealtimeNotifications,
-    adminSendToUser:   adminSendPushToUser,
-    adminBroadcast:    adminBroadcastPush,
-    callEdgeFunction:  _callEdgeFunction,
+    init:               initNotifications,
+    requestPermission:  requestNotificationPermission,
+    unsubscribe:        unsubscribeFromPush,
+    sendLocal:          sendLocalNotification,
+    setupRealtime:      setupRealtimeNotifications,
+    adminSendToUser:    adminSendPushToUser,
+    adminBroadcast:     adminBroadcastPush,
+    callEdgeFunction:   _callEdgeFunction,
     getPermissionState: () => Notification.permission,
-    showToast:         _showToast
+    showToast:          _showToast
   };
 
   // Backward-compat globals
