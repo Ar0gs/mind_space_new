@@ -9,14 +9,12 @@
 <meta name="mobile-web-app-capable" content="yes"/>
 <meta name="theme-color" content="#1900ff"/>
 <meta name="msapplication-TileColor" content="#1900ff"/>
-<meta name="msapplication-TileImage" content="icons/icon-144.png"/>
 <link rel="manifest" href="manifest.json"/>
 <link rel="apple-touch-icon" href="icons/icon-192.png"/>
 <link rel="apple-touch-icon" sizes="152x152" href="icons/icon-152.png"/>
 <link rel="apple-touch-icon" sizes="192x192" href="icons/icon-192.png"/>
 <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png"/>
-<link rel="icon" type="image/png" sizes="96x96" href="icons/icon-96.png"/>
-<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
 <title>MindSpace — Safe Counselling, Always</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
@@ -40,7 +38,7 @@
 }
 *,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
 html{scroll-behavior:smooth}
-body{background:var(--off);color:var(--ink);font-family:'DM Sans',sans-serif;overflow-x:hidden;-webkit-font-smoothing:antialiased;min-height:100vh}
+body{background:var(--off);color:var(--ink);font-family:'DM Sans',sans-serif;overflow-x:hidden;-webkit-font-smoothing:antialiased;min-height:100vh;min-height:-webkit-fill-available;padding-top:env(safe-area-inset-top);padding-top:constant(safe-area-inset-top);padding-left:env(safe-area-inset-left);padding-right:env(safe-area-inset-right)}
 
 /* CURSOR */
 #c-dot,#c-ring{position:fixed;top:0;left:0;pointer-events:none;z-index:99999;border-radius:50%;transform:translate(-50%,-50%)}
@@ -415,7 +413,7 @@ function showToast(msg){const t=document.getElementById('toast');document.getEle
 window.showToast=showToast;
 </script>
 <!-- #RiseWithIMPACT Ticker -->
-<style>body{padding-bottom:28px!important}</style>
+<style>body{padding-bottom:calc(28px + env(safe-area-inset-bottom))!important;padding-bottom:calc(28px + constant(safe-area-inset-bottom))!important}</style>
 <div id="rwi-ticker" style="position:fixed;bottom:0;left:0;right:0;z-index:99999;height:28px;overflow:hidden;background:rgba(25,0,255,0.92);backdrop-filter:blur(6px);display:flex;align-items:center;border-top:1px solid rgba(255,255,255,0.12);pointer-events:none;">
   <div id="rwi-track" style="display:flex;align-items:center;white-space:nowrap;animation:rwi-scroll 22s linear infinite;will-change:transform;"></div>
 </div>
