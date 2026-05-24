@@ -33,9 +33,8 @@
     navigator.serviceWorker.addEventListener('message', _handleSWMessage);
 
     if (Notification.permission === 'granted') {
-      // Already granted — silently resubscribe on each login so _pushSubscription
-      // is always populated (prevents toggle glitch on reload).
-      const sub = await _subscribeToPush();
+      // Already granted — silently resubscribe on each login
+      await _subscribeToPush();
       _syncAllButtons(true);
     } else if (Notification.permission === 'default' && !_isAdmin) {
       // Not yet asked — request automatically (notifications are on by default)
@@ -47,24 +46,8 @@
     }
   }
 
-  // ── Detect iOS PWA (requires user gesture for Notification.requestPermission) ──
-  function _isIosPwa() {
-    return /iphone|ipad|ipod/i.test(navigator.userAgent) &&
-      (window.navigator.standalone === true ||
-       window.matchMedia('(display-mode: standalone)').matches);
-  }
-
   // ── Auto-request on first load (no nudge bar needed — just ask) ──
   async function _autoRequestPermission() {
-    // iOS PWA: Notification.requestPermission() MUST be called from a direct user
-    // gesture — a setTimeout callback does not qualify. Skip auto-request and let
-    // the button handler call requestNotificationPermission() instead.
-    if (_isIosPwa()) {
-      _syncAllButtons(false);
-      _showToast('Tap "Enable Notifications" below to get alerts from your counsellor.', 'info', 6000);
-      return;
-    }
-
     // Small delay so the page has settled before the browser prompt appears
     await new Promise(r => setTimeout(r, 1500));
 
@@ -77,6 +60,7 @@
       _showToast('✓ Notifications enabled — you\'ll be alerted when your counsellor replies.', 'success');
     } else {
       _syncAllButtons(false);
+      // Blocked — show a gentle one-time note that they can re-enable from settings
       if (permission === 'denied') {
         _showToast('Notifications are blocked. To re-enable, tap the 🔒 icon in your address bar → Notifications → Allow.', 'warning', 8000);
       }
@@ -159,21 +143,18 @@
   // ── Subscribe to push and save to Supabase ──
   async function _subscribeToPush() {
     try {
-      // Register SW if not yet done (covers first-load and hard-reload on mobile).
-      // Do NOT gate on `.controller` — it is null on first install even after
-      // a successful registration, so we always attempt registration (idempotent).
-      try {
-        await navigator.serviceWorker.register('/sw.js');
-      } catch (regErr) {
-        console.warn('[Notif] SW registration error (non-fatal):', regErr);
+      if (!navigator.serviceWorker.controller) {
+        try {
+          await navigator.serviceWorker.register('/sw.js');
+          await new Promise(resolve => setTimeout(resolve, 500));
+        } catch (regErr) {
+          console.warn('[Notif] SW registration error (non-fatal):', regErr);
+        }
       }
 
-      // `navigator.serviceWorker.ready` resolves only when an active SW exists.
-      // Give it up to 15 s (mobile networks can be slow); if it times out we
-      // fall back gracefully — local notifications will still work.
       const reg = await Promise.race([
         navigator.serviceWorker.ready,
-        new Promise((_, reject) => setTimeout(() => reject(new Error('SW ready timeout')), 15000))
+        new Promise((_, reject) => setTimeout(() => reject(new Error('SW ready timeout')), 8000))
       ]);
 
       let sub = await reg.pushManager.getSubscription();
@@ -228,25 +209,19 @@
       updated_at: new Date().toISOString()
     };
 
-    await global.sb.from('push_subscriptions').delete()
-      .eq('user_id', _userId).eq('endpoint', json.endpoint);
+    // Single atomic upsert on composite unique key (user_id, endpoint).
+    // Fixes: 409/23505 race on insert + 400 wrong onConflict column.
+    const { data: upserted, error: upsertErr } = await global.sb
+      .from('push_subscriptions')
+      .upsert(record, { onConflict: 'user_id,endpoint' })
+      .select();
 
-    const { data: inserted, error: insertErr } = await global.sb
-      .from('push_subscriptions').insert(record).select();
-
-    if (!insertErr) {
-      console.log('[Notif] ✓ Subscription saved to DB:', inserted);
+    if (!upsertErr) {
+      console.log('[Notif] ✓ Subscription saved to DB:', upserted);
       return true;
     }
 
-    if (insertErr.code === '23505') {
-      const { error: upsertErr } = await global.sb
-        .from('push_subscriptions')
-        .upsert(record, { onConflict: 'endpoint' }).select();
-      if (!upsertErr) return true;
-    }
-
-    console.error('[Notif] ✗ Save failed:', insertErr.message);
+    console.error('[Notif] ✗ Save failed:', upsertErr.message);
     return false;
   }
 
