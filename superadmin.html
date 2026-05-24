@@ -1462,61 +1462,30 @@ async function sendQuickNotif() {
   }
 }
 
-// ── Send push directly via Supabase DB + web-push protocol ──
-// Bypasses the Edge Function entirely — no auth issues, no deployment needed.
-// Fetches subscriptions via service-role client, then POSTs to each push endpoint
-// through a tiny Supabase Edge Function that just does the VAPID signing.
+// ── callPushFunction — calls the Supabase Edge Function server-side ──
+// The Edge Function does the VAPID signing and posts to push endpoints.
+// Browsers cannot POST to WNS/FCM directly (CORS + DNS restrictions).
 async function callPushFunction(payload) {
   const { broadcast, targetUserId, notification } = payload;
 
-  // 1. Fetch subscriptions using service-role client (bypasses RLS)
-  let query = sbAdmin.from('push_subscriptions').select('*');
-  if (!broadcast && targetUserId) query = query.eq('user_id', targetUserId);
-  const { data: subs, error: subsErr } = await query;
-
-  if (subsErr) throw new Error('Could not fetch subscriptions: ' + subsErr.message);
-  if (!subs || subs.length === 0) return { sent: 0, failed: 0, total: 0, message: 'No subscriptions found' };
-
-  // 2. Call Edge Function once per subscription using service role key as auth
-  //    The service role JWT is a valid Bearer token that Supabase accepts
-  const pushPayload = JSON.stringify({
-    title:     notification.title || 'MindSpace',
-    body:      notification.body  || 'You have a new notification.',
-    url:       notification.url   || '/chat.html',
-    type:      notification.type  || 'message',
-    timestamp: Date.now()
+  const res = await fetch(`${SUPABASE_URL}/functions/v1/send-push`, {
+    method: 'POST',
+    headers: {
+      'Content-Type':  'application/json',
+      'apikey':        SUPABASE_SERVICE_ROLE_KEY,
+      'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`
+    },
+    body: JSON.stringify({ broadcast, targetUserId, notification })
   });
 
-  const results = await Promise.allSettled(subs.map(sub =>
-    fetch(`${SUPABASE_URL}/functions/v1/send-push`, {
-      method: 'POST',
-      headers: {
-        'Content-Type':  'application/json',
-        'apikey':        SUPABASE_SERVICE_ROLE_KEY,
-        'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`
-      },
-      body: JSON.stringify({
-        targetUserId: sub.user_id,
-        notification,
-        _subscription: { endpoint: sub.endpoint, p256dh: sub.p256dh, auth: sub.auth }
-      })
-    }).then(async r => {
-      const j = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
-      return j;
-    })
-  ));
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
 
-  const sent   = results.filter(r => r.status === 'fulfilled').length;
-  const failed = results.filter(r => r.status === 'rejected').length;
-  const failureReasons = results
-    .map((r, i) => r.status === 'rejected'
-      ? { endpoint: subs[i].endpoint.substring(0, 50), message: r.reason?.message }
-      : null)
-    .filter(Boolean);
+  // Normalise failureReasons so callers always get the field
+  if (!json.failureReasons) json.failureReasons = [];
 
-  console.log('[Push] Results — sent:', sent, 'failed:', failed, 'reasons:', failureReasons);
-  return { sent, failed, total: subs.length, failureReasons };
+  console.log('[Push] Edge Function result:', json);
+  return json;
 }
 
 async function sendBroadcastNotif() {
