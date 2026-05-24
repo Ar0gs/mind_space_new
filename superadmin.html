@@ -1464,16 +1464,21 @@ async function sendQuickNotif() {
 
 // ── callPushFunction — calls the Supabase Edge Function server-side ──
 // The Edge Function does the VAPID signing and posts to push endpoints.
-// Browsers cannot POST to WNS/FCM directly (CORS + DNS restrictions).
+// Passes the superadmin's live session token — the deployed Edge Function
+// already validates it against admin/superadmin profiles.
 async function callPushFunction(payload) {
   const { broadcast, targetUserId, notification } = payload;
+
+  // Get the superadmin's current session token
+  const { data: { session } } = await sb.auth.getSession();
+  if (!session?.access_token) throw new Error('Not authenticated — please sign in again.');
 
   const res = await fetch(`${SUPABASE_URL}/functions/v1/send-push`, {
     method: 'POST',
     headers: {
       'Content-Type':  'application/json',
-      'apikey':        SUPABASE_SERVICE_ROLE_KEY,
-      'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`
+      'apikey':        'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx0d21sZ21pcHZqZmJvYWd3eWN0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkzODE1NzgsImV4cCI6MjA5NDk1NzU3OH0.0kcj6mGPoweVblmjYxPUs_KKRZUvn_cdyO9qjgF2J4o',
+      'Authorization': `Bearer ${session.access_token}`
     },
     body: JSON.stringify({ broadcast, targetUserId, notification })
   });
@@ -1481,9 +1486,7 @@ async function callPushFunction(payload) {
   const json = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
 
-  // Normalise failureReasons so callers always get the field
   if (!json.failureReasons) json.failureReasons = [];
-
   console.log('[Push] Edge Function result:', json);
   return json;
 }
