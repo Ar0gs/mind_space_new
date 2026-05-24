@@ -1533,9 +1533,10 @@ async function sendBroadcastNotif() {
       broadcast: true,
       notification: { title, body, url, type: 'announcement' }
     });
-
-
-
+    const failDetail = r.failureReasons?.length ? ` — ${r.failureReasons[0].message}` : '';
+    resEl.style.color = r.sent > 0 ? '#43e97b' : 'var(--danger)';
+    resEl.textContent = `✓ Sent to ${r.sent ?? 0} device(s)${r.failed ? ` (${r.failed} failed${failDetail})` : ''}${r.message ? ' — ' + r.message : ''}.`;
+    toast(r.sent > 0 ? 'Broadcast sent!' : 'Push failed — see details', r.sent > 0 ? 'success' : 'error');
   } catch(e) {
     resEl.style.color = 'var(--danger)';
     resEl.textContent = '✗ ' + e.message;
