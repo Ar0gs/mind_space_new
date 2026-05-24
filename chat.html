@@ -9,14 +9,12 @@
 <meta name="mobile-web-app-capable" content="yes"/>
 <meta name="theme-color" content="#1900ff"/>
 <meta name="msapplication-TileColor" content="#1900ff"/>
-<meta name="msapplication-TileImage" content="icons/icon-144.png"/>
 <link rel="manifest" href="manifest.json"/>
 <link rel="apple-touch-icon" href="icons/icon-192.png"/>
 <link rel="apple-touch-icon" sizes="152x152" href="icons/icon-152.png"/>
 <link rel="apple-touch-icon" sizes="192x192" href="icons/icon-192.png"/>
 <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png"/>
-<link rel="icon" type="image/png" sizes="96x96" href="icons/icon-96.png"/>
-<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
 <title>MindSpace — Your Session</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
 <link href="https://fonts.googleapis.com/css2?family=Anton&family=DM+Sans:ital,wght@0,300;0,400;0,500;0,700;1,300&family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet"/>
@@ -28,8 +26,12 @@
   --err:#C0392B;--user-bubble:#0A0A0A;--counsellor-bubble:#1900ff;
 }
 *,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
-html,body{height:100%;overflow:hidden}
-body{background:var(--off);color:var(--ink);font-family:'DM Sans',sans-serif;-webkit-font-smoothing:antialiased;display:flex;flex-direction:column}
+html{height:100%;height:-webkit-fill-available}
+body{height:100%;min-height:-webkit-fill-available;overflow:hidden;background:var(--off);color:var(--ink);font-family:'DM Sans',sans-serif;-webkit-font-smoothing:antialiased;display:flex;flex-direction:column;
+  /* iOS safe-area: status bar top, home indicator bottom */
+  padding-top:env(safe-area-inset-top);
+  padding-top:constant(safe-area-inset-top);
+}
 
 /* TOP BAR */
 .topbar{height:56px;background:var(--white);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;padding:0 16px;flex-shrink:0;z-index:200;gap:8px}
@@ -64,7 +66,7 @@ body{background:var(--off);color:var(--ink);font-family:'DM Sans',sans-serif;-we
 @media(max-width:768px){.hamburger-btn{display:flex}}
 
 /* MOBILE DRAWER */
-.mobile-drawer{position:fixed;top:0;right:-100%;width:min(300px,85vw);height:100%;background:var(--white);z-index:9990;transition:right .3s cubic-bezier(.16,1,.3,1);display:flex;flex-direction:column;overflow-y:auto;box-shadow:-4px 0 32px rgba(0,0,0,.15)}
+.mobile-drawer{position:fixed;top:0;right:-100%;width:min(300px,85vw);height:100%;height:-webkit-fill-available;background:var(--white);z-index:9990;transition:right .3s cubic-bezier(.16,1,.3,1);display:flex;flex-direction:column;overflow-y:auto;box-shadow:-4px 0 32px rgba(0,0,0,.15)}
 .mobile-drawer.open{right:0}
 .drawer-overlay{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:9989;display:none;backdrop-filter:blur(2px)}
 .drawer-overlay.open{display:block}
@@ -174,7 +176,11 @@ body{background:var(--off);color:var(--ink);font-family:'DM Sans',sans-serif;-we
 @keyframes bounce{0%,60%,100%{transform:translateY(0)}30%{transform:translateY(-7px)}}
 
 /* INPUT */
-.input-area{padding:12px 20px;background:var(--white);border-top:1px solid var(--border);flex-shrink:0}
+.input-area{padding:12px 20px;background:var(--white);border-top:1px solid var(--border);flex-shrink:0;
+  /* lift above iOS home indicator */
+  padding-bottom:max(12px, env(safe-area-inset-bottom));
+  padding-bottom:max(12px, constant(safe-area-inset-bottom));
+}
 @media(max-width:600px){.input-area{padding:10px 12px}}
 .input-toolbar{display:flex;align-items:center;gap:6px;margin-bottom:8px;flex-wrap:wrap}
 .toolbar-btn{width:30px;height:30px;border:1px solid var(--border);background:transparent;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:15px;transition:all .2s;border-radius:2px;flex-shrink:0}
@@ -518,31 +524,11 @@ async function handleNotifToggle() {
   const permission = Notification.permission;
 
   if (permission === "granted") {
-    // Check if there is an active push subscription (may be null after a reload
-    // if _subscribeToPush hasn't run yet or failed silently).
-    let hasSub = !!window.MSNotif?._pushSub;
-    if (!hasSub && 'serviceWorker' in navigator) {
-      try {
-        const reg = await navigator.serviceWorker.ready;
-        hasSub = !!(await reg.pushManager.getSubscription());
-      } catch (_) {}
+    // Notifications are on — clicking the button turns them OFF
+    if (confirm("Turn off notifications?\nYou can re-enable them from this menu anytime.")) {
+      await MSNotif.disable();
+      syncNotifUI(false);
     }
-
-    if (hasSub) {
-      // Notifications are actively on — offer to turn them off.
-      if (confirm("Turn off notifications?\nYou can re-enable them from this menu anytime.")) {
-        await MSNotif.disable();
-        syncNotifUI(false);
-      }
-      return;
-    }
-
-    // Permission granted but no active subscription (e.g. first load race) —
-    // resubscribe silently and confirm to the user.
-    if (window.MSNotif) {
-      await MSNotif.init(currentUser.id, false);
-    }
-    syncNotifUI(Notification.permission === 'granted');
     return;
   }
 
@@ -551,7 +537,8 @@ async function handleNotifToggle() {
     return;
   }
 
-  // permission === "default" — request now (this IS a user gesture, so iOS is fine)
+  // permission === "default" — shouldn't normally reach here since we auto-request,
+  // but handle it as a fallback
   if (currentUser && window.MSNotif) {
     await MSNotif.init(currentUser.id, false);
   }
@@ -574,6 +561,8 @@ function syncNotifUI(enabled) {
     topBtn.style.color = enabled ? "var(--sage)" : "";
   }
   if (sideBtn) {
+    // When ON  → label says "Disable Notifications" (clicking will turn off)
+    // When OFF → label says "Enable Notifications"  (clicking will turn on)
     sideBtn.textContent = enabled ? "🔔 Disable Notifications" : "🔕 Enable Notifications";
     sideBtn.style.borderColor = enabled ? "var(--sage)" : "";
     sideBtn.style.color       = enabled ? "var(--sage)" : "";
@@ -594,8 +583,6 @@ function syncNotifUI(enabled) {
       : "Notifications off. Tap above to re-enable.";
   }
 }
-// Expose so notifications.js _syncAllButtons can delegate to this authoritative version.
-window.syncNotifUI = syncNotifUI;
 
 // ── INIT ──
 async function init() {
@@ -1021,7 +1008,7 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDrawer(
 init();
 </script>
 <!-- #RiseWithIMPACT Ticker -->
-<style>body{padding-bottom:28px!important}</style>
+<style>body{padding-bottom:calc(28px + env(safe-area-inset-bottom))!important;padding-bottom:calc(28px + constant(safe-area-inset-bottom))!important}</style>
 <div id="rwi-ticker" style="position:fixed;bottom:0;left:0;right:0;z-index:99999;height:28px;overflow:hidden;background:rgba(25,0,255,0.92);backdrop-filter:blur(6px);display:flex;align-items:center;border-top:1px solid rgba(255,255,255,0.12);pointer-events:none;">
   <div id="rwi-track" style="display:flex;align-items:center;white-space:nowrap;animation:rwi-scroll 22s linear infinite;will-change:transform;"></div>
 </div>
@@ -1055,6 +1042,32 @@ init();
     || window.navigator.standalone === true;
 
   let deferredPrompt = null;
+
+    // iOS Virtual Keyboard Fix
+  // On iOS PWA the keyboard doesn't shrink the viewport; it overlaps the input.
+  // visualViewport API lets us nudge the input-area up when the keyboard appears.
+  if (window.visualViewport) {
+    var _inputArea = document.querySelector('.input-area');
+    function _onVPResize() {
+      var offset = window.innerHeight - window.visualViewport.height - window.visualViewport.offsetTop;
+      if (_inputArea) {
+        _inputArea.style.transform = (offset > 50) ? ('translateY(-' + Math.round(offset) + 'px)') : '';
+      }
+    }
+    window.visualViewport.addEventListener('resize', _onVPResize);
+    window.visualViewport.addEventListener('scroll', _onVPResize);
+  }
+
+  // iOS: scroll messages to bottom when keyboard opens
+  var _msgInput = document.getElementById('msg-input');
+  if (_msgInput) {
+    _msgInput.addEventListener('focus', function() {
+      setTimeout(function() {
+        var msgs = document.getElementById('messages');
+        if (msgs) msgs.scrollTop = msgs.scrollHeight;
+      }, 350);
+    });
+  }
 
   // ── Service Worker ──
   if ('serviceWorker' in navigator) {
@@ -1093,25 +1106,23 @@ init();
     localStorage.setItem('mindspace_installed', '1');
   });
 
-  // ── Show banner after short delay if not already installed ──
-  window.addEventListener('load', () => {
-    if (isStandalone) return; // Already running as PWA
-    if (localStorage.getItem('mindspace_pwa_dismissed') === '1') return;
+  // Show install banner:
+  // iOS Safari never fires beforeinstallprompt, so show manual guide after delay.
+  // Android/Chrome: only show when beforeinstallprompt fires (handled above).
+  window.addEventListener('load', function() {
+    if (isStandalone) return;
+    // Use sessionStorage so dismissal resets each session but doesn't permanently block
+    if (sessionStorage.getItem('mindspace_pwa_dismissed')) return;
     if (localStorage.getItem('mindspace_installed') === '1') return;
 
-    // iOS: always show manual instructions after 2s
-    // Android: wait for beforeinstallprompt event (already handled above)
-    // If nothing fired after 3s, show manual guide anyway
-    setTimeout(() => {
-      const banner = document.getElementById('pwa-banner');
-      if (banner && banner.classList.contains('show')) return; // already shown
-      if (isIOS) {
+    if (isIOS) {
+      setTimeout(function() {
+        var banner = document.getElementById('pwa-banner');
+        if (banner && banner.classList.contains('show')) return;
         showInstallBanner('ios');
-      } else {
-        // Desktop or unsupported — show generic guide
-        showInstallBanner('manual');
-      }
-    }, 3000);
+      }, 4000);
+    }
+    // Android/Desktop: handled entirely by beforeinstallprompt event
   });
 
   // ── Build & inject the install UI once ──
@@ -1123,7 +1134,7 @@ init();
     el.innerHTML = `
       <div id="pwa-banner-inner">
         <div id="pwa-banner-icon">
-          <img src="icons/icon-96.png" width="48" height="48" alt="MindSpace" onerror="this.style.display='none'" style="display:block"/>
+          <img src="icons/icon-192.png" width="48" height="48" alt="MindSpace" onerror="this.style.display='none'" style="display:block"/>
         </div>
         <div id="pwa-banner-body">
           <div id="pwa-banner-title">Install MindSpace</div>
@@ -1305,9 +1316,9 @@ init();
       howBtn.style.display = 'none';
       steps.style.display = 'block';
       steps.innerHTML = `
-        <div class="pwa-step"><span class="pwa-step-num">1</span><span>Tap the <strong>Share button</strong> <span style="font-size:16px">⎙</span> at the bottom of your browser</span></div>
-        <div class="pwa-step"><span class="pwa-step-num">2</span><span>Scroll down and tap <strong>"Add to Home Screen"</strong></span></div>
-        <div class="pwa-step"><span class="pwa-step-num">3</span><span>Tap <strong>"Add"</strong> in the top right — done!</span></div>`;
+        <div class="pwa-step"><span class="pwa-step-num">1</span><span>Tap the <strong>Share button</strong> <span style="font-size:16px">⎙</span> at the bottom center of Safari (box with arrow pointing up)</span></div>
+        <div class="pwa-step"><span class="pwa-step-num">2</span><span>Scroll the share sheet and tap <strong>"Add to Home Screen"</strong></span></div>
+        <div class="pwa-step"><span class="pwa-step-num">3</span><span>Tap <strong>"Add"</strong> in the top-right corner — app installed!</span></div>`;
     } else {
       // Desktop or other — show generic guide
       sub.textContent = 'Install MindSpace as an app on your device:';
@@ -1360,7 +1371,7 @@ init();
 
   function dismissBanner() {
     hidePWABanner();
-    localStorage.setItem('mindspace_pwa_dismissed', '1');
+    sessionStorage.setItem('mindspace_pwa_dismissed', '1');
   }
 
   async function triggerInstall() {
