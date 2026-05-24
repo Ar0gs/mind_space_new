@@ -283,7 +283,7 @@ body{background:var(--off);color:var(--ink);font-family:'DM Sans',sans-serif;-we
   <!-- Desktop right items -->
   <div class="topbar-right">
     <span id="user-greeting"></span>
-    <button id="notif-toggle-btn" class="sign-out-btn" onclick="handleNotifToggle()" title="Enable push notifications">🔕 Notifications</button>
+    <button id="notif-toggle-btn" class="sign-out-btn" onclick="handleNotifToggle()" title="Disable push notifications">🔔 Notifications On</button>
     <button class="sign-out-btn" onclick="signOut()">Sign Out</button>
   </div>
 </div>
@@ -312,8 +312,8 @@ body{background:var(--off);color:var(--ink);font-family:'DM Sans',sans-serif;-we
   <!-- Notifications -->
   <div class="drawer-section">
     <div class="drawer-section-label">Notifications</div>
-    <p class="drawer-notif-hint">Get alerted when your counsellor replies, even when the tab is in the background.</p>
-    <button class="drawer-notif-btn" id="drawer-notif-btn" onclick="handleNotifToggle()">🔕 Enable Notifications</button>
+    <p class="drawer-notif-hint">Notifications are on by default so you never miss a message. Tap below to turn them off.</p>
+    <button class="drawer-notif-btn" id="drawer-notif-btn" onclick="handleNotifToggle()">🔔 Disable Notifications</button>
     <div class="drawer-notif-status" id="drawer-notif-status"></div>
   </div>
 
@@ -382,7 +382,7 @@ body{background:var(--off);color:var(--ink);font-family:'DM Sans',sans-serif;-we
     <div class="sidebar-section">
       <div class="sidebar-label">Notifications</div>
       <p style="font-size:11px;font-weight:300;color:var(--muted);line-height:1.6;margin-bottom:10px;">Get alerted when your counsellor replies, even when this tab is in the background.</p>
-      <button id="notif-sidebar-btn" onclick="handleNotifToggle()" style="width:100%;padding:9px 12px;border:1.5px solid var(--border);background:transparent;cursor:pointer;font-family:inherit;font-size:11px;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:var(--muted);transition:all .2s;text-align:center;">🔕 Enable Notifications</button>
+      <button id="notif-sidebar-btn" onclick="handleNotifToggle()" style="width:100%;padding:9px 12px;border:1.5px solid var(--border);background:transparent;cursor:pointer;font-family:inherit;font-size:11px;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:var(--muted);transition:all .2s;text-align:center;">🔔 Disable Notifications</button>
       <div id="notif-sidebar-status" style="font-size:10px;color:var(--muted);margin-top:6px;min-height:14px;text-align:center;"></div>
     </div>
     <div class="rwi-sidebar">#RiseWithIMPACT</div>
@@ -518,63 +518,84 @@ async function handleNotifToggle() {
   const permission = Notification.permission;
 
   if (permission === "granted") {
-    // Already enabled — offer to turn off
-    if (confirm("Notifications are enabled. Turn them off?")) {
-      await MSNotif.unsubscribe();
-      syncNotifUI(false);
+    // Check if there is an active push subscription (may be null after a reload
+    // if _subscribeToPush hasn't run yet or failed silently).
+    let hasSub = !!window.MSNotif?._pushSub;
+    if (!hasSub && 'serviceWorker' in navigator) {
+      try {
+        const reg = await navigator.serviceWorker.ready;
+        hasSub = !!(await reg.pushManager.getSubscription());
+      } catch (_) {}
     }
+
+    if (hasSub) {
+      // Notifications are actively on — offer to turn them off.
+      if (confirm("Turn off notifications?\nYou can re-enable them from this menu anytime.")) {
+        await MSNotif.disable();
+        syncNotifUI(false);
+      }
+      return;
+    }
+
+    // Permission granted but no active subscription (e.g. first load race) —
+    // resubscribe silently and confirm to the user.
+    if (window.MSNotif) {
+      await MSNotif.init(currentUser.id, false);
+    }
+    syncNotifUI(Notification.permission === 'granted');
     return;
   }
 
   if (permission === "denied") {
-    alert("Notifications are blocked by your browser.\n\nTo enable them:\n1. Click the lock/info icon in your address bar\n2. Set Notifications to \"Allow\"\n3. Reload this page");
+    alert("Notifications are blocked by your browser.\n\nTo re-enable them:\n1. Click the lock/info icon in your address bar\n2. Set Notifications to \"Allow\"\n3. Reload this page");
     return;
   }
 
-  // permission === "default" — ensure MSNotif is initialised with our userId
-  // before asking for permission. This handles the race where the user clicks
-  // the button before init() has finished setting up MSNotif internally.
+  // permission === "default" — request now (this IS a user gesture, so iOS is fine)
   if (currentUser && window.MSNotif) {
-    // Pass userId directly — MSNotif._initDone flag prevents double-init
     await MSNotif.init(currentUser.id, false);
   }
-
   const granted = await MSNotif.requestPermission();
   syncNotifUI(granted);
-
-  // If granted, also wire up realtime notifications for this conversation
   if (granted && conversationId && window.MSNotif) {
     MSNotif.setupRealtime(conversationId);
   }
 }
 
 function syncNotifUI(enabled) {
-  const topBtn  = document.getElementById("notif-toggle-btn");
-  const sideBtn = document.getElementById("notif-sidebar-btn");
-  const sideSt  = document.getElementById("notif-sidebar-status");
+  const topBtn    = document.getElementById("notif-toggle-btn");
+  const sideBtn   = document.getElementById("notif-sidebar-btn");
+  const sideSt    = document.getElementById("notif-sidebar-status");
   const drawerBtn = document.getElementById("drawer-notif-btn");
   const drawerSt  = document.getElementById("drawer-notif-status");
+
   if (topBtn) {
-    topBtn.textContent = enabled ? "🔔 Notifications On" : "🔕 Notifications";
+    topBtn.textContent = enabled ? "🔔 Notifications On" : "🔕 Notifications Off";
     topBtn.style.color = enabled ? "var(--sage)" : "";
   }
   if (sideBtn) {
-    sideBtn.textContent = enabled ? "🔔 Notifications On" : "🔕 Enable Notifications";
+    sideBtn.textContent = enabled ? "🔔 Disable Notifications" : "🔕 Enable Notifications";
     sideBtn.style.borderColor = enabled ? "var(--sage)" : "";
-    sideBtn.style.color = enabled ? "var(--sage)" : "";
+    sideBtn.style.color       = enabled ? "var(--sage)" : "";
   }
   if (sideSt) {
-    sideSt.textContent = enabled ? "✓ You will receive alerts for new messages." : "";
-    sideSt.style.color = "var(--sage)";
+    sideSt.textContent = enabled
+      ? "✓ You will receive alerts for new messages."
+      : "Notifications off. Tap above to re-enable.";
+    sideSt.style.color = enabled ? "var(--sage)" : "#aaa";
   }
   if (drawerBtn) {
-    drawerBtn.textContent = enabled ? "🔔 Notifications On" : "🔕 Enable Notifications";
+    drawerBtn.textContent = enabled ? "🔔 Disable Notifications" : "🔕 Enable Notifications";
     drawerBtn.classList.toggle("enabled", enabled);
   }
   if (drawerSt) {
-    drawerSt.textContent = enabled ? "✓ You'll be alerted when your counsellor replies." : "";
+    drawerSt.textContent = enabled
+      ? "✓ You'll be alerted when your counsellor replies."
+      : "Notifications off. Tap above to re-enable.";
   }
 }
+// Expose so notifications.js _syncAllButtons can delegate to this authoritative version.
+window.syncNotifUI = syncNotifUI;
 
 // ── INIT ──
 async function init() {
