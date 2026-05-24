@@ -4,8 +4,8 @@
 // Full WhatsApp-style push notification support
 // ============================================================
 
-const CACHE_NAME = 'mindspace-v2';
-const CACHE_VERSION = 2;
+const CACHE_NAME = 'mindspace-v3';
+const CACHE_VERSION = 3;
 
 const PRECACHE_URLS = [
   '/',
@@ -87,7 +87,11 @@ async function cacheFirst(request) {
     }
     return response;
   } catch {
-    return caches.match('/offline.html');
+    // For image/asset requests that fail, return a minimal valid response
+    // rather than the offline HTML page (which would cause "not a valid image" errors).
+    const isAsset = /\.(png|jpg|jpeg|svg|ico|webp|woff2?)$/.test(new URL(request.url).pathname);
+    if (isAsset) return new Response('', { status: 404, statusText: 'Not Found' });
+    return caches.match('/offline.html') || new Response('Offline', { status: 503 });
   }
 }
 
@@ -101,7 +105,10 @@ async function networkFirst(request) {
     return response;
   } catch {
     const cached = await caches.match(request);
-    return cached || caches.match('/offline.html');
+    if (cached) return cached;
+    const isAsset = /\.(png|jpg|jpeg|svg|ico|webp|woff2?)$/.test(new URL(request.url).pathname);
+    if (isAsset) return new Response('', { status: 404, statusText: 'Not Found' });
+    return caches.match('/offline.html') || new Response('Offline', { status: 503 });
   }
 }
 
@@ -111,7 +118,12 @@ async function staleWhileRevalidate(request) {
   const fetchPromise = fetch(request).then(response => {
     if (response.ok) cache.put(request, response.clone());
     return response;
-  }).catch(() => null);
+  }).catch(() => {
+    // Must never resolve to null — respondWith(null) throws TypeError.
+    const isAsset = /\.(png|jpg|jpeg|svg|ico|webp|woff2?)$/.test(new URL(request.url).pathname);
+    if (isAsset) return new Response('', { status: 404, statusText: 'Not Found' });
+    return caches.match('/offline.html') || new Response('Offline', { status: 503 });
+  });
   return cached || fetchPromise;
 }
 
